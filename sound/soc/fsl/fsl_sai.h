@@ -38,7 +38,7 @@
 #define FSL_SAI_TFR5	0x54 /* SAI Transmit FIFO 5 */
 #define FSL_SAI_TFR6	0x58 /* SAI Transmit FIFO 6 */
 #define FSL_SAI_TFR7	0x5C /* SAI Transmit FIFO 7 */
-#define FSL_SAI_TMR			0x60 /* SAI Transmit Mask */
+#define FSL_SAI_TMR	0x60 /* SAI Transmit Mask */
 #define FSL_SAI_TTCTL	0x70 /* SAI Transmit Timestamp Control Register */
 #define FSL_SAI_TTCTN	0x74 /* SAI Transmit Timestamp Counter Register */
 #define FSL_SAI_TBCTN	0x78 /* SAI Transmit Bit Counter Register */
@@ -65,11 +65,12 @@
 #define FSL_SAI_RFR5	0xd4 /* SAI Receive FIFO 5 */
 #define FSL_SAI_RFR6	0xd8 /* SAI Receive FIFO 6 */
 #define FSL_SAI_RFR7	0xdc /* SAI Receive FIFO 7 */
-#define FSL_SAI_RMR		0xe0 /* SAI Receive Mask */
+#define FSL_SAI_RMR	0xe0 /* SAI Receive Mask */
 #define FSL_SAI_RTCTL	0xf0 /* SAI Receive Timestamp Control Register */
 #define FSL_SAI_RTCTN	0xf4 /* SAI Receive Timestamp Counter Register */
 #define FSL_SAI_RBCTN	0xf8 /* SAI Receive Bit Counter Register */
 #define FSL_SAI_RTCAP	0xfc /* SAI Receive Timestamp Capture */
+
 #define FSL_SAI_MCTL	0x100 /* SAI MCLK Control Register */
 #define FSL_SAI_MDIV	0x104 /* SAI MCLK Divide Register */
 
@@ -120,7 +121,7 @@
 #define FSL_SAI_CR2_MSEL(ID)	((ID) << 26)
 #define FSL_SAI_CR2_BCP			BIT(25)
 #define FSL_SAI_CR2_BCD_MSTR	BIT(24)
-#define FSL_SAI_CR2_BYP			BIT(23) /* BCLK bypass */
+#define FSL_SAI_CR2_BYP		BIT(23) /* BCLK bypass */
 #define FSL_SAI_CR2_DIV_MASK	0xff
 
 /* SAI Transmit and Receive Configuration 3 Register */
@@ -164,6 +165,7 @@
 #define FSL_SAI_MCTL_MSEL_MCLK3	(BIT(24) | BIT(25))
 #define FSL_SAI_MCTL_DIV_EN	BIT(23)
 #define FSL_SAI_MCTL_DIV_MASK	0xFF
+
 /* SAI VERID Register */
 #define FSL_SAI_VERID_MAJOR_SHIFT   24
 #define FSL_SAI_VERID_MAJOR_MASK    GENMASK(31, 24)
@@ -173,14 +175,17 @@
 #define FSL_SAI_VERID_FEATURE_MASK  GENMASK(15, 0)
 #define FSL_SAI_VERID_EFIFO_EN	    BIT(0)
 #define FSL_SAI_VERID_TSTMP_EN	    BIT(1)
+
 /* SAI PARAM Register */
 #define FSL_SAI_PARAM_SPF_SHIFT	    16
 #define FSL_SAI_PARAM_SPF_MASK	    GENMASK(19, 16)
 #define FSL_SAI_PARAM_WPF_SHIFT	    8
 #define FSL_SAI_PARAM_WPF_MASK	    GENMASK(11, 8)
 #define FSL_SAI_PARAM_DLN_MASK	    GENMASK(3, 0)
+
 /* SAI MCLK Divide Register */
 #define FSL_SAI_MDIV_MASK	    0xFFFFF
+
 /* SAI timestamp and bitcounter */
 #define FSL_SAI_xTCTL_TSEN         BIT(0)
 #define FSL_SAI_xTCTL_TSINC        BIT(1)
