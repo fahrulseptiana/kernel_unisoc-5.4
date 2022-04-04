@@ -497,7 +497,7 @@ static ssize_t dev_write(struct file *file, const char __user *u, size_t count,
 		else
 			wake_up(&recv_wq);
 	} else
-		log_print("%s: no op %x %llx", __func__,
+		log_print("%s: no op %x %llx - may got interrupted?", __func__,
 			  info.fsid, (unsigned long long)info.number);
 	return count;
 }
