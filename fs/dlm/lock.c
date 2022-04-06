@@ -5254,6 +5254,7 @@ static struct dlm_lkb *find_resend_waiter(struct dlm_ls *ls)
 	}
 	mutex_unlock(&ls->ls_waiters_mutex);
 
+	return lkb;
 }
 
 /* Deal with lookups and lkb's marked RESEND from _pre.  We may now be the
@@ -5914,7 +5915,6 @@ int dlm_user_adopt_orphan(struct dlm_ls *ls, struct dlm_user_args *ua_tmp,
 	struct dlm_lkb *lkb = NULL, *iter;
 	struct dlm_user_args *ua;
 	int found_other_mode = 0;
-	int found = 0;
 	int rv = 0;
 
 	mutex_lock(&ls->ls_orphans_mutex);
