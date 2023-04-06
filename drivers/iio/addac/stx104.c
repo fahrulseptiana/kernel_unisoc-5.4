@@ -187,6 +187,8 @@ static int stx104_write_raw(struct iio_dev *indio_dev,
 				
 			mutex_lock(&priv->lock);
 
+			mutex_lock(&priv->lock);
+
 			priv->chan_out_states[chan->channel] = val;
 			iowrite16(val, &priv->reg->dac[chan->channel]);
 
