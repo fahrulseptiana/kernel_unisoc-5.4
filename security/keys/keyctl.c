@@ -979,6 +979,7 @@ long keyctl_chown_key(key_serial_t id, uid_t user, gid_t group)
 
 	{
 		bool is_privileged_op = false;
+
 		/* only the sysadmin can chown a key to some other UID */
 		if (user != (uid_t) -1 && !uid_eq(key->uid, uid))
 			is_privileged_op = true;
@@ -987,6 +988,7 @@ long keyctl_chown_key(key_serial_t id, uid_t user, gid_t group)
 		 * than one of those that the current process subscribes to */
 		if (group != (gid_t) -1 && !gid_eq(gid, key->gid) && !in_group_p(gid))
 			is_privileged_op = true;
+
 		if (is_privileged_op && !capable(CAP_SYS_ADMIN))
 			goto error_put;
 	}
