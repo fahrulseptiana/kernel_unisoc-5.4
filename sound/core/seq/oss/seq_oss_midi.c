@@ -378,6 +378,7 @@ snd_seq_oss_midi_open(struct seq_oss_devinfo *dp, int dev, int fmode)
 
 	mdev->devinfo = dp;
 	err = 0;
+
  unlock:
 	mutex_unlock(&mdev->open_mutex);
 	snd_use_lock_free(&mdev->use_lock);
@@ -415,7 +416,6 @@ snd_seq_oss_midi_close(struct seq_oss_devinfo *dp, int dev)
 
 	mdev->opened = 0;
 	mdev->devinfo = NULL;
-
 
  unlock:
 	mutex_unlock(&mdev->open_mutex);
