@@ -600,6 +600,5 @@ void snd_hdac_regmap_sync(struct hdac_device *codec)
 	if (codec->regmap)
 		regcache_sync(codec->regmap);
 	mutex_unlock(&codec->regmap_lock);
-	}
 }
 EXPORT_SYMBOL_GPL(snd_hdac_regmap_sync);
