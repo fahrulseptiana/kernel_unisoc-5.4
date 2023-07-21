@@ -701,6 +701,7 @@ static int vxlan_fdb_append(struct vxlan_fdb *f,
 static bool vxlan_parse_gpe_proto(struct vxlanhdr *hdr, __be16 *protocol)
 {
 	struct vxlanhdr_gpe *gpe = (struct vxlanhdr_gpe *)hdr;
+
 	/* Need to have Next Protocol set for interfaces in GPE mode. */
 	if (!gpe->np_applied)
 		return false;
@@ -715,9 +716,11 @@ static bool vxlan_parse_gpe_proto(struct vxlanhdr *hdr, __be16 *protocol)
 	 */
 	if (gpe->oam_flag)
 		return false;
+
 	*protocol = tun_p_to_eth_p(gpe->next_protocol);
 	if (!*protocol)
 		return false;
+
 	return true;
 }
 
