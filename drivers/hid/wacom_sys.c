@@ -2532,6 +2532,7 @@ fail:
 static void wacom_remote_destroy_battery(struct wacom *wacom, int index)
 {
 	struct wacom_remote *remote = wacom->remote;
+
 	if (remote->remotes[index].battery.battery) {
 		devres_release_group(&wacom->hdev->dev,
 				     &remote->remotes[index].battery.bat_desc);
@@ -2645,7 +2646,7 @@ static int wacom_remote_attach_battery(struct wacom *wacom, int index)
 
 	if (remote->remotes[index].battery.battery)
 		return 0;
-	
+
 	if (!remote->remotes[index].active_time)
 		return 0;
 
