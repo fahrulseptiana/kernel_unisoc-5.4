@@ -496,6 +496,7 @@ static void enable_slot(struct acpiphp_slot *slot, bool bridge)
 				acpiphp_native_scan_bridge(dev);
 		}
 	} else {
+		LIST_HEAD(add_list);
 		int max, pass;
 
 		acpiphp_rescan_slot(slot);
@@ -511,8 +512,6 @@ static void enable_slot(struct acpiphp_slot *slot, bool bridge)
 					pcibios_resource_survey_bus(dev->subordinate);
 					if (pci_is_root_bus(bus))
 						__pci_bus_size_bridges(dev->subordinate, &add_list);
-					__pci_bus_size_bridges(dev->subordinate,
-							       &add_list);
 				}
 			}
 		}
