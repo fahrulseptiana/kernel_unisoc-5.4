@@ -2309,8 +2309,6 @@ void *__symbol_get(const char *symbol)
 		goto fail;
 	}
 	if (strong_try_module_get(owner))
-	sym = find_symbol(symbol, &owner, NULL, NULL, true, true);
-	if (sym && strong_try_module_get(owner))
 		sym = NULL;
 	preempt_enable();
 
