@@ -3422,18 +3422,20 @@ static int shmem_parse_one(struct fs_context *fc, struct fs_parameter *param)
 		kuid = make_kuid(current_user_ns(), result.uint_32);
 		if (!uid_valid(kuid))
 			goto bad_value;
-			
+
 		/*
 		 * The requested uid must be representable in the
 		 * filesystem's idmapping.
 		 */
 		if (!kuid_has_mapping(fc->user_ns, kuid))
 			goto bad_value;
+
 		ctx->uid = kuid;
 		break;
 	case Opt_gid:
 		kgid = make_kgid(current_user_ns(), result.uint_32);
 		if (!gid_valid(kgid))
+			goto bad_value;
 
 		/*
 		 * The requested gid must be representable in the
@@ -3441,6 +3443,7 @@ static int shmem_parse_one(struct fs_context *fc, struct fs_parameter *param)
 		 */
 		if (!kgid_has_mapping(fc->user_ns, kgid))
 			goto bad_value;
+
 		ctx->gid = kgid;
 		break;
 	case Opt_huge:
