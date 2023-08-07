@@ -1166,6 +1166,7 @@ static int sc16is7xx_gpio_direction_output(struct gpio_chip *chip,
 		state |= BIT(offset);
 	else
 		state &= ~BIT(offset);
+
 	/*
 	 * If we write IOSTATE first, and then IODIR, the output value is not
 	 * transferred to the corresponding I/O pin.
@@ -1176,7 +1177,6 @@ static int sc16is7xx_gpio_direction_output(struct gpio_chip *chip,
 	 */
 	sc16is7xx_port_update(port, SC16IS7XX_IODIR_REG, BIT(offset),
 			      BIT(offset));
-	
 	sc16is7xx_port_write(port, SC16IS7XX_IOSTATE_REG, state);
 
 	return 0;
