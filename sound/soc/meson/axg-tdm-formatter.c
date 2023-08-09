@@ -33,6 +33,7 @@ int axg_tdm_formatter_set_channel_masks(struct regmap *map,
 	unsigned int ch = ts->channels;
 	u32 val[AXG_TDM_NUM_LANES];
 	int i, j, k;
+
 	/*
 	 * We need to mimick the slot distribution used by the HW to keep the
 	 * channel placement consistent regardless of the number of channel
