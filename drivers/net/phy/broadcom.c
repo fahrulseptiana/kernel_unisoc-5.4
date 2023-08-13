@@ -429,6 +429,7 @@ static int bcm54810_read_mmd(struct phy_device *phydev, int devnum, u16 regnum)
 {
 	return -EOPNOTSUPP;
 }
+
 static int bcm54810_write_mmd(struct phy_device *phydev, int devnum, u16 regnum,
 			      u16 val)
 {
