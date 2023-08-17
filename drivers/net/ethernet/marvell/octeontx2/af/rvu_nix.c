@@ -2430,6 +2430,7 @@ rx_frscfg:
 	if (link < 0)
 		return NIX_AF_ERR_RX_LINK_INVALID;
 
+
 linkcfg:
 	nix_find_link_frs(rvu, req, pcifunc);
 
