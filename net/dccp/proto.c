@@ -330,6 +330,7 @@ __poll_t dccp_poll(struct file *file, struct socket *sock,
 	int state;
 
 	sock_poll_wait(file, sock, wait);
+
 	state = inet_sk_state_load(sk);
 	if (state == DCCP_LISTEN)
 		return inet_csk_listen_poll(sk);
