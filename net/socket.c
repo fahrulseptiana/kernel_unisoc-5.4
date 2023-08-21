@@ -3639,7 +3639,9 @@ int kernel_connect(struct socket *sock, struct sockaddr *addr, int addrlen,
 		   int flags)
 {
 	struct sockaddr_storage address;
+
 	memcpy(&address, addr, addrlen);
+
 	return sock->ops->connect(sock, (struct sockaddr *)&address, addrlen, flags);
 }
 EXPORT_SYMBOL(kernel_connect);
