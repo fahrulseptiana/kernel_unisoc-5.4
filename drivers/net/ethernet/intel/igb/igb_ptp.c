@@ -1257,11 +1257,14 @@ void igb_ptp_init(struct igb_adapter *adapter)
 
 		spin_lock_init(&adapter->tmreg_lock);
 		INIT_WORK(&adapter->ptp_tx_work, igb_ptp_tx_work);
+
 		if (adapter->ptp_flags & IGB_PTP_OVERFLOW_CHECK)
 			INIT_DELAYED_WORK(&adapter->ptp_overflow_work,
 					  igb_ptp_overflow_check);
+
 		adapter->tstamp_config.rx_filter = HWTSTAMP_FILTER_NONE;
 		adapter->tstamp_config.tx_type = HWTSTAMP_TX_OFF;
+
 		igb_ptp_reset(adapter);
 	}
 }
