@@ -250,7 +250,19 @@ jobs:
           make ${{ env.ARGS }} ${{ env.KERNEL_DEFCONFIG_PATH }}
           make ${{ env.ARGS }}
           # tree ${{ env.OUT_DIR }}
-      
+          
+      - name: 🧩 Locate kernelsu lkm
+        working-directory: ${{ github.workspace }}
+        run: |
+          KERNELSU_KO=$(find . -type f -name "kernelsu.ko" | head -n 1)
+          if [[ -n "$KERNELSU_KO" ]]; then
+            echo "🤔 Found kernelsu.ko at $KERNELSU_KO"
+            mkdir -p tmp/kernelsu
+            cp "$KERNELSU_KO" tmp/kernelsu/
+          else
+            echo "🤔 kernelsu.ko not found, skipping upload"
+          fi
+        
       - name: 😌 Start building dtbo.img
         working-directory: ${{ github.workspace }}
         env:
@@ -288,6 +300,14 @@ jobs:
             echo "🤔 Compiled kernel Image not found!"
             exit 1
           fi
+          
+      - name: 💾 Upload kernelsu lkm
+        uses: actions/upload-artifact@v4
+        with:
+          name: "kernelsu.ko"
+          path: tmp/kernelsu/kernelsu.ko
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 💛 Upload Image
         uses: actions/upload-artifact@v4
