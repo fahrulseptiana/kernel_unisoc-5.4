@@ -155,7 +155,7 @@ static void phx_handle_native_reboot_into_recovery(const char *happen_time)
 
 static void phx_handle_hang_oplus(const char *happen_time)
 {
-	phx_klog_bgitooterror(ERROR_HANG_OPLUS, happen_time);
+	phx_klog_booterror(ERROR_HANG_OPLUS, happen_time);
 	phx_log_dump(ERROR_HANG_OPLUS);
 }
 
