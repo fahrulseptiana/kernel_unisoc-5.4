@@ -6,3 +6,6 @@
 	path = KernelSU-Next
 	url = https://github.com/maxsteeel/KernelSU-Next
 	branch = susfs-legacy-test
+[submodule "toolchain"]
+	path = toolchain
+	url = https://github.com/maxsteeel/proton-12
