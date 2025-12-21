@@ -1,7 +1,8 @@
 [submodule "Baseband-guard"]
 	path = Baseband-guard
 	url = https://github.com/vc-teahouse/Baseband-guard
-[submodule "SukiSU"]
-	path = SukiSU
-	url = https://github.com/SukiSU-Ultra/SukiSU-Ultra/
-	branch = susfs-main
+
+[submodule "KernelSU-Next"]
+	path = KernelSU-Next
+	url = https://github.com/maxsteeel/KernelSU-Next
+	branch = susfs-legacy-test
