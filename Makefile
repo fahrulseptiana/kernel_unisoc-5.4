@@ -568,6 +568,23 @@ ifdef building_out_of_srctree
 	{ echo "# this is build directory, ignore it"; echo "*"; } > .gitignore
 endif
 
+ifneq ($(shell $(srctree)/toolchain/bin/clang --version 2>&1 | head -n 1 | grep clang),)
+CC		= $(srctree)/toolchain/bin/clang
+LD		= $(srctree)/toolchain/bin/ld.lld
+AR		= $(srctree)/toolchain/bin/llvm-ar
+NM		= $(srctree)/toolchain/bin/llvm-nm
+OBJCOPY		= $(srctree)/toolchain/bin/llvm-objcopy
+OBJDUMP		= $(srctree)/toolchain/bin/llvm-objdump
+READELF		= $(srctree)/toolchain/bin/llvm-readelf
+OBJSIZE		= $(srctree)/toolchain/bin/llvm-size
+STRIP		= $(srctree)/toolchain/bin/llvm-strip
+CROSS_COMPILE = $(srctree)/toolchain/bin/aarch64-linux-gnu-
+CROSS_COMPILE_ARM32 = $(srctree)/toolchain/bin/arm-linux-gnueabi-
+LLVM		= 1
+LLVM_IAS	= 1
+export CC LD AR NM OBJCOPY OBJDUMP READELF OBJSIZE STRIP CROSS_COMPILE CROSS_COMPILE_ARM32 LLVM LLVM_IAS
+endif
+
 ifneq ($(shell $(CC) --version 2>&1 | head -n 1 | grep clang),)
 ifneq ($(CROSS_COMPILE),)
 CLANG_TRIPLE	?= $(CROSS_COMPILE)
