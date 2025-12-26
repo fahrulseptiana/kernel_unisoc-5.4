@@ -266,12 +266,6 @@ static void add_namespace(struct namespace_list **list, const char *namespace)
 	}
 }
 
-static bool module_imports_namespace(struct module *module,
-				     const char *namespace)
-{
-	return contains_namespace(module->imported_namespaces, namespace);
-}
-
 static const struct {
 	const char *str;
 	enum export export;
@@ -2175,93 +2169,6 @@ void buf_write(struct buffer *buf, const char *s, int len)
 	buf->pos += len;
 }
 
-static void check_for_gpl_usage(enum export exp, const char *m, const char *s)
-{
-	const char *e = is_vmlinux(m) ?"":".ko";
-
-	switch (exp) {
-	case export_gpl:
-		fatal("modpost: GPL-incompatible module %s%s "
-		      "uses GPL-only symbol '%s'\n", m, e, s);
-		break;
-	case export_unused_gpl:
-		fatal("modpost: GPL-incompatible module %s%s "
-		      "uses GPL-only symbol marked UNUSED '%s'\n", m, e, s);
-		break;
-	case export_gpl_future:
-		warn("modpost: GPL-incompatible module %s%s "
-		      "uses future GPL-only symbol '%s'\n", m, e, s);
-		break;
-	case export_plain:
-	case export_unused:
-	case export_unknown:
-		/* ignore */
-		break;
-	}
-}
-
-static void check_for_unused(enum export exp, const char *m, const char *s)
-{
-	const char *e = is_vmlinux(m) ?"":".ko";
-
-	switch (exp) {
-	case export_unused:
-	case export_unused_gpl:
-		warn("modpost: module %s%s "
-		      "uses symbol '%s' marked UNUSED\n", m, e, s);
-		break;
-	default:
-		/* ignore */
-		break;
-	}
-}
-
-static int check_exports(struct module *mod)
-{
-	struct symbol *s, *exp;
-	int err = 0;
-
-	for (s = mod->unres; s; s = s->next) {
-		const char *basename;
-		exp = find_symbol(s->name);
-		if (!exp || exp->module == mod) {
-			if (have_vmlinux && !s->weak) {
-				if (warn_unresolved) {
-					warn("\"%s\" [%s.ko] undefined!\n",
-					     s->name, mod->name);
-				} else {
-					merror("\"%s\" [%s.ko] undefined!\n",
-					       s->name, mod->name);
-					err = 1;
-				}
-			}
-			continue;
-		}
-		basename = strrchr(mod->name, '/');
-		if (basename)
-			basename++;
-		else
-			basename = mod->name;
-
-		if (exp->namespace) {
-			add_namespace(&mod->required_namespaces,
-				      exp->namespace);
-
-			if (!write_namespace_deps &&
-			    !module_imports_namespace(mod, exp->namespace)) {
-				warn("module %s uses symbol %s from namespace %s, but does not import it.\n",
-				     basename, exp->name, exp->namespace);
-			}
-		}
-
-		if (!mod->gpl_compatible)
-			check_for_gpl_usage(exp->export, basename, exp->name);
-		check_for_unused(exp->export, basename, exp->name);
-	}
-
-	return err;
-}
-
 static int check_modname_len(struct module *mod)
 {
 	const char *mod_name;
@@ -2676,7 +2583,6 @@ int main(int argc, char **argv)
 		buf.pos = 0;
 
 		err |= check_modname_len(mod);
-		err |= check_exports(mod);
 		if (write_namespace_deps)
 			continue;
 
