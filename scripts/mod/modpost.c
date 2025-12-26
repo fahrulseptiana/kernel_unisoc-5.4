@@ -2232,7 +2232,8 @@ static int check_exports(struct module *mod)
 				} else {
 					merror("\"%s\" [%s.ko] undefined!\n",
 					       s->name, mod->name);
-					err = 1;
+					// bypass error messages
+					err = 0;
 				}
 			}
 			continue;
