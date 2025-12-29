@@ -1054,8 +1054,8 @@ static ssize_t comp_algorithm_store(struct device *dev,
 	}
 
 	if (!strcmp(compressor, "lz4")) {
-        pr_info("ZRAM: Android asked for 'lz4', but we forced 'lz4kd' ;)\n");
-        strcpy(zram->compressor, "lz4kd");
+        pr_info("ZRAM: Android asked for 'lz4', but we forced '%d' ;)\n", CONFIG_ZRAM_DEF_COMP);
+        strcpy(zram->compressor, CONFIG_ZRAM_DEF_COMP);
     } else {
         strcpy(zram->compressor, compressor);
     }

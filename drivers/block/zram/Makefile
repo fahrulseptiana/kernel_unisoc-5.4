@@ -4,6 +4,6 @@ zram-$(CONFIG_ZRAM_DEDUP)	+=	zram_dedup.o
 
 obj-y	+=	zram.o
 
-obj-$(CONFIG_ZRAM)      += hybridswap/
+obj-$(CONFIG_HYBRIDSWAP)      += hybridswap/
 
 ccflags-y += -O3
