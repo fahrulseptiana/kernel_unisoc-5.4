@@ -24,13 +24,8 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
-
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat);
-#endif
-
-#ifdef CONFIG_HYMOFS
-#include "hymofs.h"
 #endif
 
 /**
@@ -105,9 +100,6 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 					    query_flags);
 
 	generic_fillattr(inode, stat);
-#ifdef CONFIG_HYMOFS
-	hymofs_spoof_stat(path, stat);
-#endif
 	return 0;
 }
 EXPORT_SYMBOL(vfs_getattr_nosec);

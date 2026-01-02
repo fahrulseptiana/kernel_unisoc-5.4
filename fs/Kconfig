@@ -341,10 +341,4 @@ config DYNAMIC_FSYNC_ENABLED
 	  Enable Dynamic Fsync by default
 	  If unsure, say N.
 
-config HYMOFS
-	bool "HymoFS support"
-	default y
-	help
-	  HymoFS is a kernel-level path manipulation and hiding framework.
-
 endmenu

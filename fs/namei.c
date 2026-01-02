@@ -62,10 +62,6 @@ extern bool susfs_is_base_dentry_sdcard_dir(struct dentry* base);
 extern const struct qstr susfs_fake_qstr_name;
 #endif
 
-#ifdef CONFIG_HYMOFS
-#include "hymofs.h"
-#endif
-
 /* [Feb-1997 T. Schoebel-Theuer]
  * Fundamental changes in the pathname lookup mechanisms (namei)
  * were necessary because of omirr.  The reason is that omirr needs
@@ -147,21 +143,8 @@ extern const struct qstr susfs_fake_qstr_name;
 
 #define EMBEDDED_NAME_MAX	(PATH_MAX - offsetof(struct filename, iname))
 
-#ifdef CONFIG_HYMOFS
-struct filename *__original_getname_flags(const char __user *filename, int flags, int *empty);
-
-struct filename *getname_flags(const char __user *filename, int flags, int *empty)
-{
-	struct filename *result = __original_getname_flags(filename, flags, empty);
-	return hymofs_handle_getname(result);
-}
-#endif
 struct filename *
-#ifdef CONFIG_HYMOFS
-__original_getname_flags(const char __user *filename, int flags, int *empty)
-#else
 getname_flags(const char __user *filename, int flags, int *empty)
-#endif
 {
 	struct filename *result;
 	char *kname;
