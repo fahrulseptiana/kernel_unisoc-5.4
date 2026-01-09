@@ -341,4 +341,11 @@ config DYNAMIC_FSYNC_ENABLED
 	  Enable Dynamic Fsync by default
 	  If unsure, say N.
 
+config NOMOUNT
+	bool "NoMount Path Redirection Subsystem"
+	default y
+	help
+	  NoMount allows path redirection and virtual file injection
+	  without mounting filesystems. Useful for systemless modifications.
+
 endmenu
