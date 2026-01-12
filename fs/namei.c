@@ -222,13 +222,14 @@ getname_flags(const char __user *filename, int flags, int *empty)
 
 	result->uptr = filename;
 	result->aname = NULL;
-	audit_getname(result);
 
 #ifdef CONFIG_NOMOUNT
 	if (!IS_ERR(result)) {
 		result = nomount_getname_hook(result);
 	}
 #endif
+
+	audit_getname(result);
 
 	return result;
 }

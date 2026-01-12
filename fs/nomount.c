@@ -187,6 +187,7 @@ struct filename *nomount_getname_hook(struct filename *name)
         new_name = getname_kernel(target_path); 
         kfree(target_path);
         if (!IS_ERR(new_name)) {
+            new_name->uptr = name->uptr;
             putname(name);
             return new_name;
         }
