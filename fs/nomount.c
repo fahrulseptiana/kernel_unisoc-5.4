@@ -90,7 +90,7 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     rcu_read_lock();
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {            
-            if (rule->is_new) {
+            if (rule->is_new || current_uid().val < 10000) {
                 found_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
             }
             break;
