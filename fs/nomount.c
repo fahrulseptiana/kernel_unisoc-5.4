@@ -26,6 +26,13 @@ struct linux_dirent {
     char        d_name[];
 };
 
+static DEFINE_HASHTABLE(nomount_rules_ht, NOMOUNT_HASH_BITS);
+static DEFINE_HASHTABLE(nomount_dirs_ht, NOMOUNT_HASH_BITS);
+static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
+
+static LIST_HEAD(nomount_rules_list);
+static DEFINE_SPINLOCK(nomount_lock);
+
 static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
 

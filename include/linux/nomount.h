@@ -67,13 +67,6 @@ struct nomount_uid_node {
     struct rcu_head rcu;
 };
 
-static DEFINE_HASHTABLE(nomount_rules_ht, NOMOUNT_HASH_BITS);
-static DEFINE_HASHTABLE(nomount_dirs_ht, NOMOUNT_HASH_BITS);
-static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
-
-static LIST_HEAD(nomount_rules_list);
-static DEFINE_SPINLOCK(nomount_lock);
-
 #ifdef CONFIG_NOMOUNT
 extern atomic_t nomount_enabled;
 
