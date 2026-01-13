@@ -15,7 +15,7 @@
 #include <linux/vmalloc.h>
 #include <linux/nomount.h> 
 
-atomic_t nomount_enabled = ATOMIC_INIT(1);
+atomic_t nomount_enabled = ATOMIC_INIT(0);
 EXPORT_SYMBOL(nomount_enabled);
 #define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
 
@@ -92,6 +92,7 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     char *found_path = NULL;
 
     if (!inode || NOMOUNT_DISABLED()) return NULL;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return NULL;
     if (nomount_is_uid_blocked(current_uid().val)) return NULL;
 
     rcu_read_lock();
@@ -130,6 +131,7 @@ static void nomount_refresh_critical_inodes(void) {
 
 bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
     if (!inode || NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return false;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
     if (!(mask & MAY_EXEC)) return false;
 
     if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
@@ -145,6 +147,7 @@ bool nomount_is_injected_file(struct inode *inode) {
     int bkt;
     bool match = false;
     if (!inode || NOMOUNT_DISABLED()) return false;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 
     rcu_read_lock();
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
@@ -188,6 +191,8 @@ struct filename *nomount_getname_hook(struct filename *name)
 
     if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
         return name;
+
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
 
     target_path = nomount_resolve_path(name->name);
     if (target_path) {
@@ -240,6 +245,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
     unsigned long fake_ino;
 
     if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     page_buf = __getname();
     if (!page_buf) return;
@@ -298,6 +304,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     unsigned long fake_ino;
 
     if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     page_buf = __getname();
     if (!page_buf) return;
@@ -645,6 +652,7 @@ static int __init nomount_init(void) {
     spin_lock_init(&nomount_lock);
     ret = misc_register(&nomount_device);
     if (ret) return ret;
+    atomic_set(&nomount_enabled, 1);
     pr_info("NoMount: Loaded\n");
     return 0;
 }
