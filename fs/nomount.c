@@ -13,6 +13,7 @@
 #include <linux/miscdevice.h>
 #include <linux/cred.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/mm.h>
 #include <linux/nomount.h> 
 
 atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -188,12 +189,14 @@ struct filename *nomount_getname_hook(struct filename *name)
 {
     char *target_path;
     struct filename *new_name;
+    unsigned int pflags;
 
     if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
         return name;
 
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
 
+    pflags = memalloc_nofs_save();
     target_path = nomount_resolve_path(name->name);
     if (target_path) {
         new_name = getname_kernel(target_path); 
@@ -201,9 +204,11 @@ struct filename *nomount_getname_hook(struct filename *name)
         if (!IS_ERR(new_name)) {
             new_name->uptr = name->uptr;
             putname(name);
+            memalloc_nofs_restore(pflags);
             return new_name;
         }
     }
+    memalloc_nofs_restore(pflags);
     return name;
 }
 
