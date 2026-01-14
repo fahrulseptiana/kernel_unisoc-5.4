@@ -277,14 +277,14 @@ char *d_path(const struct path *path, char *buf, int buflen)
             int len = strlen(v_path);
             if (buflen < len + 1) {
                 kfree(v_path);
-                return ERR_PTR(-ENAMETOOLONG);
-            }
-            *--res = '\0';
-            res -= len;
-            memcpy(res, v_path, len);
-            
-            kfree(v_path);
-            return res;
+            } else {
+				*--res = '\0';
+				res -= len;
+				memcpy(res, v_path, len);
+				
+				kfree(v_path);
+				return res;
+			}
         }
     }
 #endif
