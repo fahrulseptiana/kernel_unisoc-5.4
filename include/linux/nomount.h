@@ -77,6 +77,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
 char *nomount_get_virtual_path_for_inode(struct inode *inode);
 bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 bool nomount_is_injected_file(struct inode *inode);
+void nomount_spoof_stat(const struct path *path, struct kstat *stat);
 #else
 static inline char *nomount_resolve_path(const char *p) { return NULL; }
 static inline struct filename *nomount_getname_hook(struct filename *name) { return name; }
@@ -85,6 +86,7 @@ static inline void nomount_inject_dents(struct file *f, void __user **d, int *c,
 static inline char *nomount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
 static inline bool nomount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
 static inline bool nomount_is_injected_file(struct inode *inode) { return false; }
+static inline void nomount_spoof_stat(const struct path *path, struct kstat *stat) {}
 #endif
 
 #endif /* _LINUX_NOMOUNT_H */

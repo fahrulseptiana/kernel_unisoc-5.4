@@ -415,6 +415,83 @@ unlock_out:
     kfree(path_copy);
 }
 
+static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
+    struct nomount_rule *rule;
+    int bkt;
+    char *v_path = NULL;
+
+    rcu_read_lock();
+    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
+        if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {
+            if (rule->is_new || current_uid().val < 10000) {
+                v_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
+                if (is_new) *is_new = rule->is_new;
+            }
+            break;
+        }
+    }
+    rcu_read_unlock();
+    return v_path;
+}
+
+void nomount_spoof_stat(const struct path *path, struct kstat *stat)
+{
+    char *v_path;
+    char *parent_path;
+    char *last_slash;
+    struct path p_parent;
+    struct inode *parent_inode, *inode;
+    bool is_new_file = false;
+    if (NOMOUNT_DISABLED()) return;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
+
+    inode = d_backing_inode(path->dentry);
+    if (!inode) return;
+
+    v_path = nomount_get_rule_info(inode, &is_new_file);
+    if (!v_path) return;
+
+    parent_path = kstrdup(v_path, GFP_ATOMIC);
+    if (!parent_path) {
+        kfree(v_path);
+        return;
+    }
+
+    last_slash = strrchr(parent_path, '/');
+    if (last_slash) {
+        if (last_slash == parent_path) {
+            *(last_slash + 1) = '\0';
+        } else {
+            *last_slash = '\0';
+        }
+
+        if (kern_path(parent_path, LOOKUP_FOLLOW, &p_parent) == 0) {
+            parent_inode = d_backing_inode(p_parent.dentry);
+            
+            if (parent_inode) {
+                stat->dev = parent_inode->i_sb->s_dev;
+                stat->blksize = (unsigned long)parent_inode->i_sb->s_blocksize;
+                stat->uid = parent_inode->i_uid;
+                stat->gid = parent_inode->i_gid;
+                stat->ino = parent_inode->i_ino ^ (stat->ino & 0xFFFF);
+                
+                // test
+                if (is_new_file) {
+                    stat->ino ^= 0x80000000;
+                } else {
+                    stat->ino ^= 0x40000000;
+                }
+
+                stat->rdev = parent_inode->i_rdev;
+            }
+            path_put(&p_parent);
+        }
+    }
+
+    kfree(parent_path);
+    kfree(v_path);
+}
+
 static int nomount_ioctl_add_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
