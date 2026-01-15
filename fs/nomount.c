@@ -14,6 +14,7 @@
 #include <linux/cred.h>
 #include <linux/vmalloc.h>
 #include <linux/sched/mm.h>
+#include <linux/statfs.h>
 #include <linux/nomount.h> 
 
 atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -484,6 +485,44 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 
                 stat->rdev = parent_inode->i_rdev;
             }
+            path_put(&p_parent);
+        }
+    }
+
+    kfree(parent_path);
+    kfree(v_path);
+}
+
+void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
+{
+    char *v_path;
+    char *parent_path;
+    char *last_slash;
+    struct path p_parent;
+    bool is_new_dummy;
+
+    if (NOMOUNT_DISABLED()) return;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
+
+    struct inode *inode = d_backing_inode(path->dentry);
+    if (!inode) return;
+
+    v_path = nomount_get_rule_info(inode, &is_new_dummy);
+    if (!v_path) return;
+
+    parent_path = kstrdup(v_path, GFP_ATOMIC);
+    if (!parent_path) {
+        kfree(v_path);
+        return;
+    }
+
+    last_slash = strrchr(parent_path, '/');
+    if (last_slash) {
+        if (last_slash == parent_path) *(last_slash + 1) = '\0';
+        else *last_slash = '\0';
+
+        if (kern_path(parent_path, LOOKUP_FOLLOW, &p_parent) == 0) {
+            vfs_statfs(&p_parent, buf);
             path_put(&p_parent);
         }
     }

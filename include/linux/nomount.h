@@ -78,6 +78,8 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode);
 bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 bool nomount_is_injected_file(struct inode *inode);
 void nomount_spoof_stat(const struct path *path, struct kstat *stat);
+struct kstatfs;
+void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
 #else
 static inline char *nomount_resolve_path(const char *p) { return NULL; }
 static inline struct filename *nomount_getname_hook(struct filename *name) { return name; }
@@ -87,6 +89,7 @@ static inline char *nomount_get_virtual_path_for_inode(struct inode *inode) { re
 static inline bool nomount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
 static inline bool nomount_is_injected_file(struct inode *inode) { return false; }
 static inline void nomount_spoof_stat(const struct path *path, struct kstat *stat) {}
+static inline void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf) {}
 #endif
 
 #endif /* _LINUX_NOMOUNT_H */
