@@ -15,6 +15,7 @@
 #include <linux/vmalloc.h>
 #include <linux/sched/mm.h>
 #include <linux/statfs.h>
+#include <linux/workqueue.h>
 #include <linux/nomount.h> 
 
 atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -78,7 +79,9 @@ static void nomount_flush_dcache(const char *path_name) {
     int err;
     err = kern_path(path_name, LOOKUP_FOLLOW, &path);
     if (!err) {
+        d_drop(path.dentry);
         d_invalidate(path.dentry);
+        path_put(&path);
     }
 }
 
@@ -115,8 +118,8 @@ static unsigned long nomount_get_inode_by_path(const char *path_str) {
     struct path path;
     unsigned long ino = 0;
     if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
-        if (path.dentry && path.dentry->d_inode) {
-            ino = path.dentry->d_inode->i_ino;
+        if (path.dentry && d_backing_inode(path.dentry)) {
+            ino = d_backing_inode(path.dentry)->i_ino;
         }
         path_put(&path);
     }
@@ -124,11 +127,25 @@ static unsigned long nomount_get_inode_by_path(const char *path_str) {
 }
 
 static void nomount_refresh_critical_inodes(void) {
-    if (nm_ino_adb == 0) 
-        nm_ino_adb = nomount_get_inode_by_path("/data/adb");
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
+        return;
+
+    unsigned long current_adb = READ_ONCE(nm_ino_adb);
+    unsigned long current_mod = READ_ONCE(nm_ino_modules);
+
+    if (current_adb == 0) {
+        unsigned long ino = nomount_get_inode_by_path("/data/adb");
+        if (ino != 0) {
+            WRITE_ONCE(nm_ino_adb, ino);
+        }
+    }
     
-    if (nm_ino_modules == 0) 
-        nm_ino_modules = nomount_get_inode_by_path("/data/adb/modules");
+    if (current_mod == 0) {
+        unsigned long ino = nomount_get_inode_by_path("/data/adb/modules");
+        if (ino != 0) {
+            WRITE_ONCE(nm_ino_modules, ino);
+        }
+    }
 }
 
 bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
@@ -162,6 +179,28 @@ bool nomount_is_injected_file(struct inode *inode) {
     
     return match;
 }
+
+// delayed workqueue
+static void nomount_startup_check(struct work_struct *work);
+static DECLARE_DELAYED_WORK(nm_startup_work, nomount_startup_check);
+
+static void nomount_startup_check(struct work_struct *work) {
+    unsigned long adb_ino;
+
+    adb_ino = nomount_get_inode_by_path("/data/adb");
+
+    if (adb_ino != 0) {
+        pr_info("NoMount: /data detected (inode %lu). Loading...\n", adb_ino);
+        nomount_refresh_critical_inodes();
+        atomic_set(&nomount_enabled, 1);
+        pr_info("NoMount: Loaded\n");
+        return;
+    }
+
+    pr_info("NoMount: Waiting for /data...\n");
+    schedule_delayed_work(&nm_startup_work, HZ * 2);
+}
+
 
 char *nomount_resolve_path(const char *pathname)
 {
@@ -579,6 +618,8 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         rule->real_ino = 0;
         rule->real_dev = 0;
     }
+
+    nomount_flush_dcache(rule->virtual_path);
     
     spin_lock(&nomount_lock);
     hash_add_rcu(nomount_rules_ht, &rule->node, hash);
@@ -592,7 +633,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         nomount_auto_inject_parent(rule->virtual_path, type);
         rule->is_new = true;
     }
-    nomount_flush_dcache(rule->virtual_path);
+
     return 0;
 }
 
@@ -773,8 +814,8 @@ static int __init nomount_init(void) {
     spin_lock_init(&nomount_lock);
     ret = misc_register(&nomount_device);
     if (ret) return ret;
-    atomic_set(&nomount_enabled, 1);
-    pr_info("NoMount: Loaded\n");
+    schedule_delayed_work(&nm_startup_work, HZ * 5);
     return 0;
 }
-fs_initcall(nomount_init);
+
+late_initcall(nomount_init);
