@@ -39,9 +39,66 @@ static DEFINE_SPINLOCK(nomount_lock);
 static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
 
+/* Critical processes that NoMount should ignore to avoid instability */
+static const char *const critical_processes[] = {
+    "init",
+    "ueventd",
+    "watchdogd",
+    "vold",             // Volume Daemon (USB/SDCard)
+    "logd",             // Logging
+    "servicemanager",   // Binder
+    "hwservicemanager", // Hardware Binder
+    "lmkd",             // Low Memory Killer
+    "tombstoned",       // Crash dumps
+    "zygote",           // Android App Spawner
+    "zygote64",
+    "surfaceflinger",   // UI Compositor 
+    NULL
+};
+
+/* Returns true if the current process should be ignored */
+static bool nomount_is_critical_process(void) {
+    const char *const *proc_name;
+
+    if (current->flags & PF_KTHREAD) 
+        return true;
+
+    if (current->tgid == 1) 
+        return true;
+
+    for (proc_name = critical_processes; *proc_name; proc_name++) {
+        if (strcmp(current->comm, *proc_name) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+bool nomount_should_skip(void) {
+    bool skip = false;
+
+    if (NOMOUNT_DISABLED()) 
+        return true;
+
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
+        return true;
+    
+    if (unlikely(!current)) 
+        return true;
+
+    rcu_read_lock();
+    if (nomount_is_critical_process()) {
+        skip = true;
+    }
+    rcu_read_unlock();
+
+    return skip;
+}
+EXPORT_SYMBOL(nomount_should_skip);
+
 static bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
-    if (NOMOUNT_DISABLED()) return false;
+    if (nomount_should_skip()) return false;
     
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_uid_ht, entry, node, uid) {
@@ -183,6 +240,7 @@ bool nomount_is_injected_file(struct inode *inode) {
 // delayed workqueue
 static void nomount_startup_check(struct work_struct *work);
 static DECLARE_DELAYED_WORK(nm_startup_work, nomount_startup_check);
+static void nomount_force_refresh_all(void);
 
 static void nomount_startup_check(struct work_struct *work) {
     unsigned long adb_ino;
@@ -192,6 +250,7 @@ static void nomount_startup_check(struct work_struct *work) {
     if (adb_ino != 0) {
         pr_info("NoMount: /data detected (inode %lu). Loading...\n", adb_ino);
         nomount_refresh_critical_inodes();
+        nomount_force_refresh_all();
         atomic_set(&nomount_enabled, 1);
         pr_info("NoMount: Loaded\n");
         return;
@@ -208,7 +267,7 @@ char *nomount_resolve_path(const char *pathname)
     char *target = NULL;
     u32 hash;
 
-    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
+    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
     hash = full_name_hash(NULL, pathname, strlen(pathname));
 
     rcu_read_lock();
@@ -231,7 +290,7 @@ struct filename *nomount_getname_hook(struct filename *name)
     struct filename *new_name;
     unsigned int pflags;
 
-    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
+    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
         return name;
 
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
@@ -289,7 +348,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
     int name_len, reclen;
     unsigned long fake_ino;
 
-    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
+    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     page_buf = __getname();
@@ -348,7 +407,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     int name_len, reclen;
     unsigned long fake_ino;
 
-    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
+    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     page_buf = __getname();
@@ -482,7 +541,7 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     struct path p_parent;
     struct inode *parent_inode, *inode;
     bool is_new_file = false;
-    if (NOMOUNT_DISABLED()) return;
+    if (nomount_should_skip()) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     inode = d_backing_inode(path->dentry);
@@ -540,7 +599,7 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     struct path p_parent;
     bool is_new_dummy;
 
-    if (NOMOUNT_DISABLED()) return;
+    if (nomount_should_skip()) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
     struct inode *inode = d_backing_inode(path->dentry);
@@ -568,6 +627,40 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
 
     kfree(parent_path);
     kfree(v_path);
+}
+
+/* Forces cache flushing for all active rules. */
+static void nomount_force_refresh_all(void) {
+    struct nomount_rule *rule;
+    char **paths = NULL;
+    int count = 0, i;
+
+    spin_lock(&nomount_lock);
+
+    list_for_each_entry(rule, &nomount_rules_list, list) {
+        count++;
+    }
+    
+    if (count > 0) {
+        paths = kmalloc_array(count, sizeof(char *), GFP_ATOMIC);
+        if (paths) {
+            i = 0;
+            list_for_each_entry(rule, &nomount_rules_list, list) {
+                paths[i++] = kstrdup(rule->virtual_path, GFP_ATOMIC);
+            }
+        }
+    }
+    spin_unlock(&nomount_lock);
+
+    if (paths) {
+        for (i = 0; i < count; i++) {
+            if (paths[i]) {
+                nomount_flush_dcache(paths[i]); 
+                kfree(paths[i]);
+            }
+        }
+        kfree(paths);
+    }
 }
 
 static int nomount_ioctl_add_rule(unsigned long arg)
