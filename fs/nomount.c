@@ -58,41 +58,55 @@ static const char *const critical_processes[] = {
 
 /* Returns true if the current process should be ignored */
 static bool nomount_is_critical_process(void) {
-    const char *const *proc_name;
-
-    if (current->flags & PF_KTHREAD) 
-        return true;
-
-    if (current->tgid == 1) 
-        return true;
-
-    for (proc_name = critical_processes; *proc_name; proc_name++) {
-        if (strcmp(current->comm, *proc_name) == 0)
+    const char **proc_name;
+    const char *comm;
+    
+    if (!current)
+        return true; /* Safe default */
+    
+    comm = current->comm;
+    
+    /* Check against critical process list */
+    for (proc_name = critical_processes; *proc_name != NULL; proc_name++) {
+        if (strcmp(comm, *proc_name) == 0)
             return true;
     }
-
+    
+    /* Always allow kernel threads */
+    if (current->flags & PF_KTHREAD)
+        return true;
+    
     return false;
 }
 
+
 bool nomount_should_skip(void) {
-    bool skip = false;
-
-    if (NOMOUNT_DISABLED()) 
-        return true;
-
-    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
+    /* Skip if disabled */
+    if (NOMOUNT_DISABLED())
         return true;
     
-    if (unlikely(!current)) 
+    /* Skip in interrupt/NMI context */
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress))
+        return true;
+    
+    /* Skip for critical processes */
+    if (nomount_is_critical_process())
+        return true;
+    
+    /* Skip if current task is NULL or invalid */
+    if (!current)
         return true;
 
-    rcu_read_lock();
-    if (nomount_is_critical_process()) {
-        skip = true;
-    }
-    rcu_read_unlock();
-
-    return skip;
+    /* Ignore init process and its direct children during early boot */
+    if (current->pid == 1 || (current->real_parent->pid == 1 &&
+    strncmp(current->comm, "zygote", 6) != 0))
+        return true;
+    
+    /* Ignore processes with CAP_SYS_ADMIN that might be doing system setup */
+    if (capable(CAP_SYS_ADMIN))
+        return true;
+    
+    return false;
 }
 EXPORT_SYMBOL(nomount_should_skip);
 
@@ -157,7 +171,12 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return NULL;
     if (nomount_is_uid_blocked(current_uid().val)) return NULL;
 
-    rcu_read_lock();
+    /* Extra safety check */
+    if (!rcu_read_lock_held() && !rcu_read_lock_bh_held())
+        rcu_read_lock();
+    else
+        return NULL; /* Already in RCU critical section, avoid nesting */
+
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {            
             if (rule->is_new || current_uid().val < 10000) {
@@ -174,6 +193,9 @@ EXPORT_SYMBOL(nomount_get_virtual_path_for_inode);
 static unsigned long nomount_get_inode_by_path(const char *path_str) {
     struct path path;
     unsigned long ino = 0;
+
+    if (!path_str) return 0;
+
     if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
         if (path.dentry && d_backing_inode(path.dentry)) {
             ino = d_backing_inode(path.dentry)->i_ino;
@@ -267,6 +289,7 @@ char *nomount_resolve_path(const char *pathname)
     char *target = NULL;
     u32 hash;
 
+    if (!pathname) return NULL;
     if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
     hash = full_name_hash(NULL, pathname, strlen(pathname));
 
@@ -348,6 +371,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
     int name_len, reclen;
     unsigned long fake_ino;
 
+    if (!file || !dirent || !count || !pos) return;
     if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
@@ -407,6 +431,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     int name_len, reclen;
     unsigned long fake_ino;
 
+    if (!file || !dirent || !count || !pos) return;
     if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
@@ -541,6 +566,8 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     struct path p_parent;
     struct inode *parent_inode, *inode;
     bool is_new_file = false;
+    
+    if (!path || !stat) return;
     if (nomount_should_skip()) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
@@ -599,6 +626,7 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     struct path p_parent;
     bool is_new_dummy;
 
+    if (!path || !buf) return;
     if (nomount_should_skip()) return;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 
@@ -899,12 +927,21 @@ static const struct file_operations nomount_fops = {
 };
 
 static struct miscdevice nomount_device = {
-    .minor = MISC_DYNAMIC_MINOR, .name = "nomount", .fops = &nomount_fops, .mode = 0600,
+    .minor = MISC_DYNAMIC_MINOR, 
+    .name = "nomount", 
+    .fops = &nomount_fops, 
+    .mode = 0600,
 };
 
 static int __init nomount_init(void) {
     int ret;
     spin_lock_init(&nomount_lock);
+
+    /* Initialize hash tables */
+    hash_init(nomount_rules_ht);
+    hash_init(nomount_dirs_ht);
+    hash_init(nomount_uid_ht);
+
     ret = misc_register(&nomount_device);
     if (ret) return ret;
     schedule_delayed_work(&nm_startup_work, HZ * 5);
