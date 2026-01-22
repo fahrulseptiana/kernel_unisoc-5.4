@@ -40,7 +40,7 @@ static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
 
 /* Critical processes that NoMount should ignore to avoid instability */
-static const char *const critical_processes[] = {
+static const char *critical_processes[] = {
     "init",
     "ueventd",
     "watchdogd",
@@ -97,13 +97,8 @@ bool nomount_should_skip(void) {
     if (!current)
         return true;
 
-    /* Ignore init process and its direct children during early boot */
-    if (current->pid == 1 || (current->real_parent->pid == 1 &&
-    strncmp(current->comm, "zygote", 6) != 0))
-        return true;
-    
-    /* Ignore processes with CAP_SYS_ADMIN that might be doing system setup */
-    if (capable(CAP_SYS_ADMIN))
+    /* Ignore init process during early boot */
+    if (current->pid == 1)
         return true;
     
     return false;
@@ -145,14 +140,51 @@ static void nomount_free_rule_rcu(struct rcu_head *head)
     kfree(rule);
 }
 
+static void nomount_flush_parent(const char *parent_path_str, const char *child_name) {
+    struct path parent_path;
+    struct dentry *child_dentry;
+    int err;
+
+    err = kern_path(parent_path_str, LOOKUP_FOLLOW, &parent_path);
+    if (err) return;
+
+    inode_lock(parent_path.dentry->d_inode);
+
+    child_dentry = lookup_one_len(child_name, parent_path.dentry, strlen(child_name));
+
+    if (!IS_ERR(child_dentry)) {
+        d_drop(child_dentry);
+        dput(child_dentry);
+    }
+
+    inode_unlock(parent_path.dentry->d_inode);
+    path_put(&parent_path);
+}
+
 static void nomount_flush_dcache(const char *path_name) {
     struct path path;
     int err;
+    char *parent_name, *child_name;
+
     err = kern_path(path_name, LOOKUP_FOLLOW, &path);
     if (!err) {
         d_drop(path.dentry);
-        d_invalidate(path.dentry);
         path_put(&path);
+        return;
+    }
+
+    if (err == -ENOENT) {
+        parent_name = kstrdup(path_name, GFP_KERNEL);
+        if (!parent_name) return;
+
+        char *last_slash = strrchr(parent_name, '/');
+        if (last_slash && last_slash != parent_name) {
+            *last_slash = '\0';
+            child_name = last_slash + 1;
+            
+            nomount_flush_parent(parent_name, child_name);
+        }
+        kfree(parent_name);
     }
 }
 
@@ -165,6 +197,7 @@ static unsigned long nomount_generate_ino(const char *dir, const char *name) {
 char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     struct nomount_rule *rule;
     int bkt;
+    bool need_lock;
     char *found_path = NULL;
 
     if (!inode || NOMOUNT_DISABLED()) return NULL;
@@ -172,10 +205,11 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     if (nomount_is_uid_blocked(current_uid().val)) return NULL;
 
     /* Extra safety check */
-    if (!rcu_read_lock_held() && !rcu_read_lock_bh_held())
+    need_lock = !rcu_read_lock_held() && !rcu_read_lock_bh_held();
+
+    if (need_lock) {
         rcu_read_lock();
-    else
-        return NULL; /* Already in RCU critical section, avoid nesting */
+    }
 
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {            
@@ -185,7 +219,11 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
             break;
         }
     }
-    rcu_read_unlock();
+
+    if (need_lock) {
+        rcu_read_unlock();
+    }
+
     return found_path;
 }
 EXPORT_SYMBOL(nomount_get_virtual_path_for_inode);
@@ -206,11 +244,13 @@ static unsigned long nomount_get_inode_by_path(const char *path_str) {
 }
 
 static void nomount_refresh_critical_inodes(void) {
+    unsigned long current_adb = 0, current_mod = 0, ino = 0;
+    
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
         return;
 
-    unsigned long current_adb = READ_ONCE(nm_ino_adb);
-    unsigned long current_mod = READ_ONCE(nm_ino_modules);
+    current_adb = READ_ONCE(nm_ino_adb);
+    current_mod = READ_ONCE(nm_ino_modules);
 
     if (current_adb == 0) {
         unsigned long ino = nomount_get_inode_by_path("/data/adb");
