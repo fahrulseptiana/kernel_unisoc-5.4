@@ -196,7 +196,6 @@ static unsigned long nomount_generate_ino(const char *dir, const char *name) {
 
 char *nomount_get_virtual_path_for_inode(struct inode *inode) {
     struct nomount_rule *rule;
-    int bkt;
     bool need_lock;
     char *found_path = NULL;
 
@@ -211,7 +210,7 @@ char *nomount_get_virtual_path_for_inode(struct inode *inode) {
         rcu_read_lock();
     }
 
-    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
+    hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {            
             if (rule->is_new || current_uid().val < 10000) {
                 found_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
@@ -282,13 +281,12 @@ EXPORT_SYMBOL(nomount_is_traversal_allowed);
 
 bool nomount_is_injected_file(struct inode *inode) {
     struct nomount_rule *rule;
-    int bkt;
     bool match = false;
     if (!inode || NOMOUNT_DISABLED()) return false;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 
     rcu_read_lock();
-    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
+    hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {
             match = true;
             break;
@@ -379,10 +377,14 @@ static bool nomount_find_next_injection(const char *dir_path, unsigned long v_in
     struct nomount_dir_node *node;
     struct nomount_child_name *child;
     bool found = false;
-    int bkt;
+    u32 hash;
+
+    if (!dir_path) return false;
+
+    hash = full_name_hash(NULL, dir_path, strlen(dir_path));
 
     rcu_read_lock();
-    hash_for_each_rcu(nomount_dirs_ht, bkt, node, node) {
+    hash_for_each_possible_rcu(nomount_dirs_ht, node, node, hash) {
         if (strcmp(dir_path, node->dir_path) == 0) {
             unsigned long current_idx = 0;
             list_for_each_entry_rcu(child, &node->children_names, list) {
@@ -394,12 +396,13 @@ static bool nomount_find_next_injection(const char *dir_path, unsigned long v_in
                 }
                 current_idx++;
             }
+            break; 
         }
-        if (found) break;
     }
     rcu_read_unlock();
     return found;
 }
+
 
 void nomount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos)
 {
@@ -581,11 +584,12 @@ unlock_out:
 
 static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
     struct nomount_rule *rule;
-    int bkt;
     char *v_path = NULL;
 
+    if (!inode) return NULL;
+
     rcu_read_lock();
-    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
+    hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {
             if (rule->is_new || current_uid().val < 10000) {
                 v_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
@@ -597,6 +601,7 @@ static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
     rcu_read_unlock();
     return v_path;
 }
+
 
 void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 {
