@@ -35,6 +35,8 @@ static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
 
 static LIST_HEAD(nomount_rules_list);
 static DEFINE_SPINLOCK(nomount_lock);
+DEFINE_PER_CPU(int, nm_recursion_level);
+EXPORT_PER_CPU_SYMBOL(nm_recursion_level);
 
 static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
@@ -82,6 +84,9 @@ static bool nomount_is_critical_process(void) {
 bool nomount_should_skip(void) {
     /* Skip if disabled */
     if (NOMOUNT_DISABLED())
+        return true;
+
+    if (nm_is_recursive()) 
         return true;
     
     /* Skip in interrupt/NMI context */
@@ -155,16 +160,19 @@ static void nomount_flush_parent(const char *parent_path_str, const char *child_
     err = kern_path(parent_path_str, LOOKUP_FOLLOW, &parent_path);
     if (err) return;
 
+    nm_enter();
     inode_lock(parent_path.dentry->d_inode);
 
     child_dentry = lookup_one_len(child_name, parent_path.dentry, strlen(child_name));
 
     if (!IS_ERR(child_dentry)) {
+        nm_exit();
         d_drop(child_dentry);
         dput(child_dentry);
     }
 
     inode_unlock(parent_path.dentry->d_inode);
+    nm_exit();
     path_put(&parent_path);
 }
 
@@ -173,9 +181,11 @@ static void nomount_flush_dcache(const char *path_name) {
     int err;
     char *parent_name, *child_name;
 
+    nm_enter();
     err = kern_path(path_name, LOOKUP_FOLLOW, &path);
     if (!err) {
         d_drop(path.dentry);
+        nm_exit();
         path_put(&path);
         return;
     }
@@ -191,8 +201,10 @@ static void nomount_flush_dcache(const char *path_name) {
             
             nomount_flush_parent(parent_name, child_name);
         }
+        nm_exit();
         kfree(parent_name);
     }
+    nm_exit();
 }
 
 const char *nomount_get_static_vpath(struct inode *inode) {
@@ -222,14 +234,15 @@ static unsigned long nomount_get_inode_by_path(const char *path_str) {
 
     if (!path_str) return 0;
 
-    pflags = memalloc_nofs_save(); 
+    pflags = memalloc_nofs_save();
+    nm_enter(); 
     
     if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
         if (path.dentry && d_backing_inode(path.dentry))
             ino = d_backing_inode(path.dentry)->i_ino;
         path_put(&path);
     }
-    
+    nm_exit();
     memalloc_nofs_restore(pflags);
     return ino;
 }
@@ -266,10 +279,13 @@ bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
     if (current->flags & PF_MEMALLOC_NOFS) return false;
     if (!(mask & MAY_EXEC)) return false;
 
+    nm_enter();
     if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
         (nm_ino_modules != 0 && inode->i_ino == nm_ino_modules)) {
+        nm_exit();
         return true; 
     }
+    nm_exit();
     return false;
 }
 EXPORT_SYMBOL(nomount_is_traversal_allowed);
@@ -323,6 +339,7 @@ char *nomount_resolve_path(const char *pathname) {
 
     if (!pathname || NOMOUNT_DISABLED()) return NULL;
 
+    nm_enter();
     rcu_read_lock();
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
         if (strcmp(pathname, rule->virtual_path) == 0) {
@@ -331,6 +348,7 @@ char *nomount_resolve_path(const char *pathname) {
         }
     }
     rcu_read_unlock();
+    nm_exit();
 
     return resolved;
 }
@@ -348,9 +366,11 @@ struct filename *nomount_getname_hook(struct filename *name)
     if (current->flags & PF_MEMALLOC_NOFS) return name;
 
     pflags = memalloc_nofs_save();
+    nm_enter();
     target_path = nomount_resolve_path(name->name);
 
     if (!target_path) {
+        nm_exit();
         memalloc_nofs_restore(pflags);
         return name;
     }
@@ -359,12 +379,14 @@ struct filename *nomount_getname_hook(struct filename *name)
     kfree(target_path);
     
     if (IS_ERR(new_name)) {
+        nm_exit();
         memalloc_nofs_restore(pflags);
         return name;
     }
 
     new_name->uptr = name->uptr;
     putname(name); 
+    nm_exit();
     memalloc_nofs_restore(pflags);
     return new_name;
 }
@@ -375,6 +397,7 @@ static bool nomount_find_next_injection(unsigned long dir_ino, unsigned long v_i
     struct nomount_child_name *child;
     bool found = false;
 
+    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_dirs_ht, node, node, dir_ino) {
         if (node->dir_ino == dir_ino) {
@@ -392,6 +415,7 @@ static bool nomount_find_next_injection(unsigned long dir_ino, unsigned long v_i
         }
     }
     rcu_read_unlock();
+    nm_exit();
     return found;
 }
 
@@ -418,6 +442,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
         *pos = NOMOUNT_MAGIC_POS;
     }
 
+    nm_enter();
     while (1) {
         if (!nomount_find_next_injection(dir_ino, v_index, name_buf, &type_buf)) 
             break;
@@ -444,6 +469,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
         *pos = NOMOUNT_MAGIC_POS + v_index + 1;
         v_index++;
     }
+    nm_exit();
 }
 
 void nomount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos)
@@ -468,6 +494,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
         *pos = NOMOUNT_MAGIC_POS;
     }
 
+    nm_enter();
     while (1) {
         if (!nomount_find_next_injection(dir_ino, v_index, name_buf, &type_buf)) 
             break;
@@ -494,6 +521,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
         *pos = NOMOUNT_MAGIC_POS + v_index + 1;
         v_index++;
     }
+    nm_exit();
 }
 
 static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
@@ -517,8 +545,10 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
     parent_path = path_copy;
     name = last_slash + 1;
 
+    nm_enter();
     parent_ino = nomount_get_inode_by_path(parent_path);
     if (parent_ino == 0) {
+        nm_exit();
         kfree(path_copy);
         return;
     }
@@ -560,6 +590,7 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
 
 unlock_out:
     spin_unlock(&nomount_lock);
+    nm_exit();
     kfree(path_copy);
 }
 
@@ -569,6 +600,7 @@ static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
 
     if (!inode) return NULL;
 
+    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {
@@ -580,6 +612,7 @@ static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
         }
     }
     rcu_read_unlock();
+    nm_exit();
     return v_path;
 }
 
@@ -593,6 +626,7 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
 
+    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
@@ -608,6 +642,7 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
         }
     }
     rcu_read_unlock();
+    nm_exit();
 }
 
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
@@ -621,6 +656,7 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
 
+    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
@@ -636,6 +672,7 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
         }
     }
     rcu_read_unlock();
+    nm_exit();
 }
 
 /* Forces cache flushing for all active rules. */
@@ -685,10 +722,15 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         return -EFAULT;
     if (!capable(CAP_SYS_ADMIN)) return -EPERM;
 
+    nm_enter();
     v_path = strndup_user(data.virtual_path, PATH_MAX);
-    if (IS_ERR(v_path)) return PTR_ERR(v_path);
+    if (IS_ERR(v_path)) {
+        nm_exit(); 
+        return PTR_ERR(v_path);
+    }
     r_path = strndup_user(data.real_path, PATH_MAX);
     if (IS_ERR(r_path)) {
+        nm_exit();
         kfree(v_path);
         return PTR_ERR(r_path);
     }
@@ -696,6 +738,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     hash = full_name_hash(NULL, v_path, strlen(v_path));
     rule = kzalloc(sizeof(*rule), GFP_KERNEL);
     if (!rule) {
+        nm_exit();
         kfree(v_path); kfree(r_path);
         return -ENOMEM;
     }
@@ -740,7 +783,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         nomount_auto_inject_parent(rule->virtual_path, type);
         rule->is_new = true;
     }
-
+    nm_exit();
     return 0;
 }
 
