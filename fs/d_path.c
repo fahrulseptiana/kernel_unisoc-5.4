@@ -270,7 +270,7 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	int error;
 
 #ifdef CONFIG_NOMOUNT
-    if (path->dentry && path->dentry->d_inode) {
+    if (path->dentry && path->dentry->d_inode && !nomount_should_skip()) {
         const char *v_path = nomount_get_static_vpath(path->dentry->d_inode);
         
         if (v_path) {

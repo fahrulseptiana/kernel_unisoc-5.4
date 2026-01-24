@@ -111,7 +111,9 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
 	if (!error)
 		buf->f_flags = calculate_f_flags(path->mnt);
 #ifdef CONFIG_NOMOUNT
+	if (!nomount_should_skip())
 		nomount_spoof_statfs(path, buf);
+	
 #endif
 
 	return error;

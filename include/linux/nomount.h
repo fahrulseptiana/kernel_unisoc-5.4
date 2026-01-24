@@ -73,6 +73,7 @@ struct nomount_uid_node {
 #ifdef CONFIG_NOMOUNT
 extern atomic_t nomount_enabled;
 
+bool nomount_should_skip(void);
 char *nomount_resolve_path(const char *pathname);
 struct filename *nomount_getname_hook(struct filename *name);
 void nomount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos);
@@ -84,6 +85,7 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat);
 struct kstatfs;
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
 #else
+static inline bool nomount_should_skip(void) { return true; }
 static inline char *nomount_resolve_path(const char *p) { return NULL; }
 static inline struct filename *nomount_getname_hook(struct filename *name) { return name; }
 static inline void nomount_inject_dents64(struct file *f, void __user **d, int *c, loff_t *p) {}

@@ -410,7 +410,8 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
+		 && !nomount_should_skip()) {
         if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
             error = 0;
             goto skip_real_iterate;
@@ -424,7 +425,7 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current) && 
+	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;
@@ -573,7 +574,8 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
+		 && !nomount_should_skip()) {
         if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
             error = 0;
             goto skip_real_iterate;
@@ -587,7 +589,7 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current) && 
+	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;
@@ -878,7 +880,8 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 orig_flow:
 #endif
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
+		 && !nomount_should_skip()) {
         if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
             error = 0;
             goto skip_real_iterate;
@@ -892,7 +895,7 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current) && 
+	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;

@@ -105,7 +105,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 						 query_flags);
         
 #ifdef CONFIG_NOMOUNT
-        if (ret == 0)
+        if (ret == 0 && !nomount_should_skip())
             nomount_spoof_stat(path, stat);
 #endif
         return ret;
@@ -114,7 +114,8 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 	generic_fillattr(inode, stat);
 
 #ifdef CONFIG_NOMOUNT
-    nomount_spoof_stat(path, stat);
+	if (!nomount_should_skip())
+    	nomount_spoof_stat(path, stat);
 #endif
 
 	return 0;

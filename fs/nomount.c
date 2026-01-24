@@ -79,7 +79,6 @@ static bool nomount_is_critical_process(void) {
     return false;
 }
 
-
 bool nomount_should_skip(void) {
     /* Skip if disabled */
     if (NOMOUNT_DISABLED())
@@ -87,7 +86,7 @@ bool nomount_should_skip(void) {
     
     /* Skip in interrupt/NMI context */
     if (unlikely(in_interrupt() || in_nmi() || 
-        oops_in_progress || system_state > SYSTEM_RUNNING))
+        oops_in_progress || system_state < SYSTEM_RUNNING))
         return true;
     
     /* Skip for critical processes */
@@ -99,7 +98,11 @@ bool nomount_should_skip(void) {
         return true;
 
     /* Ignore init process during early boot */
-    if (current->pid == 1)
+    if (current->pid == 1 || current->pid < 100)
+        return true;
+
+    if (unlikely(!current->mm || (current->flags & (PF_KTHREAD | PF_EXITING))
+        || !current->nsproxy))
         return true;
 
     if (current->flags & PF_MEMALLOC_NOFS) 
@@ -237,6 +240,9 @@ static void nomount_refresh_critical_inodes(void) {
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
         return;
 
+    if (current->flags & PF_MEMALLOC_NOFS) 
+        return;
+
     current_adb = READ_ONCE(nm_ino_adb);
     current_mod = READ_ONCE(nm_ino_modules);
 
@@ -256,8 +262,8 @@ static void nomount_refresh_critical_inodes(void) {
 }
 
 bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
-    if (!inode || NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return false;
-    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
+    if (!inode || NOMOUNT_DISABLED()) return false;
+    if (current->flags & PF_MEMALLOC_NOFS) return false;
     if (!(mask & MAY_EXEC)) return false;
 
     if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 

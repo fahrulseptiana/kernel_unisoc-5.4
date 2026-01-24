@@ -224,7 +224,7 @@ getname_flags(const char __user *filename, int flags, int *empty)
 	result->aname = NULL;
 
 #ifdef CONFIG_NOMOUNT
-	if (!IS_ERR(result)) {
+	if (!IS_ERR(result) && !nomount_should_skip()) {
 		result = nomount_getname_hook(result);
 	}
 #endif
@@ -365,13 +365,12 @@ int generic_permission(struct inode *inode, int mask)
 	int ret;
 
 #ifdef CONFIG_NOMOUNT
-    if (nomount_is_injected_file(inode)) {
-        return 0;
-    }
-
-    if (S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask)) {
-        return 0;
-    }
+    if (!nomount_should_skip()) {
+		if (nomount_is_injected_file(inode) ||
+			(S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask))) {
+			return 0;
+		}
+	}
 #endif
 
 	/*
@@ -475,13 +474,12 @@ int inode_permission(struct inode *inode, int mask)
 	int retval;
 
 #ifdef CONFIG_NOMOUNT
-    if (nomount_is_injected_file(inode)) {
-        return 0;
-    }
-
-    if (S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask)) {
-        return 0;
-    }
+	if (!nomount_should_skip()) {
+		if (nomount_is_injected_file(inode) ||
+			(S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask))) {
+			return 0;
+		}
+	}
 #endif
 
 	retval = sb_permission(inode->i_sb, inode, mask);
