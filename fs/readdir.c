@@ -376,7 +376,7 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
 	struct inode *inode;
 #endif
 
@@ -410,9 +410,15 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-		error = 0;
-		goto skip_real_iterate;
+	if (f.file && f.file->f_path.dentry) {
+        inode = f.file->f_path.dentry->d_inode;
+
+		if (inode) {
+			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+				error = 0;
+				goto skip_real_iterate;
+			}
+		}
 	}
 #endif
 
@@ -536,7 +542,7 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
 	struct inode *inode;
 #endif
 
@@ -570,9 +576,15 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-		error = 0;
-		goto skip_real_iterate;
+	if (f.file && f.file->f_path.dentry) {
+        inode = f.file->f_path.dentry->d_inode;
+
+		if (inode) {
+			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+				error = 0;
+				goto skip_real_iterate;
+			}
+		}
 	}
 #endif
 
@@ -839,7 +851,7 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
 	struct inode *inode;
 #endif
 
@@ -872,9 +884,15 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 orig_flow:
 #endif
 #ifdef CONFIG_NOMOUNT
-	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-		error = 0;
-		goto skip_real_iterate;
+	if (f.file && f.file->f_path.dentry) {
+        inode = f.file->f_path.dentry->d_inode;
+
+		if (inode) {
+			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+				error = 0;
+				goto skip_real_iterate;
+			}
+		}
 	}
 #endif
 
