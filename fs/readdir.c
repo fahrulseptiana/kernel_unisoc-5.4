@@ -376,7 +376,7 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
 #endif
 
@@ -410,16 +410,12 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry) {
-        inode = f.file->f_path.dentry->d_inode;
-
-		if (inode) {
-			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-				error = 0;
-				goto skip_real_iterate;
-			}
-		}
-	}
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+            error = 0;
+            goto skip_real_iterate;
+        }
+    }
 #endif
 
 	error = iterate_dir(f.file, &buf.ctx);
@@ -428,7 +424,8 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current)) {
+	if (error >= 0 && !signal_pending(current) && 
+        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;
 	}
@@ -542,7 +539,7 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
 #endif
 
@@ -576,16 +573,12 @@ orig_flow:
 #endif
 
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry) {
-        inode = f.file->f_path.dentry->d_inode;
-
-		if (inode) {
-			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-				error = 0;
-				goto skip_real_iterate;
-			}
-		}
-	}
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+            error = 0;
+            goto skip_real_iterate;
+        }
+    }
 #endif
 
 	error = iterate_dir(f.file, &buf.ctx);
@@ -594,7 +587,8 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current)) {
+	if (error >= 0 && !signal_pending(current) && 
+        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;
 	}
@@ -851,7 +845,7 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
 #endif
-#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_NOMOUNT)
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
 #endif
 
@@ -884,16 +878,12 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 orig_flow:
 #endif
 #ifdef CONFIG_NOMOUNT
-	if (f.file && f.file->f_path.dentry) {
-        inode = f.file->f_path.dentry->d_inode;
-
-		if (inode) {
-			if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-				error = 0;
-				goto skip_real_iterate;
-			}
-		}
-	}
+	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
+        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
+            error = 0;
+            goto skip_real_iterate;
+        }
+    }
 #endif
 
 	error = iterate_dir(f.file, &buf.ctx);
@@ -902,7 +892,8 @@ orig_flow:
 
 #ifdef CONFIG_NOMOUNT
 skip_real_iterate:
-	if (error >= 0 && !signal_pending(current)) {
+	if (error >= 0 && !signal_pending(current) && 
+        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 		error = initial_count - buf.count;
 	}
