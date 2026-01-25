@@ -52,9 +52,6 @@ static const char *critical_processes[] = {
     "hwservicemanager", // Hardware Binder
     "lmkd",             // Low Memory Killer
     "tombstoned",       // Crash dumps
-    "zygote",           // Android App Spawner
-    "zygote64",
-    "surfaceflinger",   // UI Compositor 
     NULL
 };
 
@@ -90,8 +87,7 @@ bool nomount_should_skip(void) {
         return true;
     
     /* Skip in interrupt/NMI context */
-    if (unlikely(in_interrupt() || in_nmi() || 
-        oops_in_progress || system_state < SYSTEM_RUNNING))
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress))
         return true;
     
     /* Skip for critical processes */
@@ -100,10 +96,6 @@ bool nomount_should_skip(void) {
     
     /* Skip if current task is NULL or invalid */
     if (!current)
-        return true;
-
-    /* Ignore init process during early boot */
-    if (current->pid == 1 || current->pid < 100)
         return true;
 
     if (unlikely(!current->mm || (current->flags & (PF_KTHREAD | PF_EXITING))
@@ -192,7 +184,10 @@ static void nomount_flush_dcache(const char *path_name) {
 
     if (err == -ENOENT) {
         parent_name = kstrdup(path_name, GFP_KERNEL);
-        if (!parent_name) return;
+        if (!parent_name) {
+            nm_exit(); 
+            return;
+        }
 
         char *last_slash = strrchr(parent_name, '/');
         if (last_slash && last_slash != parent_name) {
@@ -216,7 +211,7 @@ const char *nomount_get_static_vpath(struct inode *inode) {
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
-            if (rule->is_new || current_uid().val < 10000) {
+            if (rule->is_new || !nomount_should_skip()) {
                 path_ptr = rule->virtual_path;
             }
             break;
@@ -319,12 +314,14 @@ static void nomount_startup_check(struct work_struct *work) {
     adb_ino = nomount_get_inode_by_path("/data/adb");
 
     if (adb_ino != 0) {
-        pr_info("NoMount: /data detected (inode %lu). Loading...\n", adb_ino);
         nomount_refresh_critical_inodes();
-        nomount_force_refresh_all();
-        atomic_set(&nomount_enabled, 1);
-        pr_info("NoMount: Loaded\n");
-        return;
+
+        if (READ_ONCE(nm_ino_adb) != 0) {
+            pr_info("NoMount: /data/adb stable. Processing rules...\n");
+            nomount_force_refresh_all();
+            pr_info("NoMount: System fully synchronized.\n");
+            return;
+        }
     }
 
     pr_info("NoMount: Waiting for /data...\n");
@@ -699,12 +696,14 @@ static void nomount_force_refresh_all(void) {
     spin_unlock(&nomount_lock);
 
     if (paths) {
+        nm_enter(); 
         for (i = 0; i < count; i++) {
             if (paths[i]) {
                 nomount_flush_dcache(paths[i]); 
                 kfree(paths[i]);
             }
         }
+        nm_exit();
         kfree(paths);
     }
 }
@@ -973,8 +972,10 @@ static int __init nomount_init(void) {
 
     ret = misc_register(&nomount_device);
     if (ret) return ret;
-    schedule_delayed_work(&nm_startup_work, HZ * 10);
+    atomic_set(&nomount_enabled, 1);
+    pr_info("NoMount: Loaded\n");
+    schedule_delayed_work(&nm_startup_work, HZ * 2);
     return 0;
 }
 
-late_initcall(nomount_init);
+fs_initcall(nomount_init);
