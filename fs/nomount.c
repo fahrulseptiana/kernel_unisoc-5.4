@@ -46,12 +46,7 @@ static const char *critical_processes[] = {
     "init",
     "ueventd",
     "watchdogd",
-    "vold",             // Volume Daemon (USB/SDCard)
-    "logd",             // Logging
-    "servicemanager",   // Binder
-    "hwservicemanager", // Hardware Binder
-    "lmkd",             // Low Memory Killer
-    "tombstoned",       // Crash dumps
+    "vold", 
     NULL
 };
 
@@ -211,7 +206,7 @@ const char *nomount_get_static_vpath(struct inode *inode) {
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
-            if (rule->is_new || !nomount_should_skip()) {
+            if (rule->is_new && !nomount_should_skip()) {
                 path_ptr = rule->virtual_path;
             }
             break;
@@ -325,55 +320,60 @@ static void nomount_startup_check(struct work_struct *work) {
     }
 
     pr_info("NoMount: Waiting for /data...\n");
-    schedule_delayed_work(&nm_startup_work, HZ * 2);
+    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(500));
 }
 
 
 char *nomount_resolve_path(const char *pathname) {
     struct nomount_rule *rule;
     int bkt;
-    char *resolved = NULL;
 
     if (!pathname || NOMOUNT_DISABLED()) return NULL;
 
     nm_enter();
-    rcu_read_lock();
     hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
         if (strcmp(pathname, rule->virtual_path) == 0) {
-            resolved = kstrdup(rule->real_path, GFP_ATOMIC);
-            break;
+            return rule->real_path;
         }
     }
-    rcu_read_unlock();
     nm_exit();
-
-    return resolved;
+    return NULL;
 }
 EXPORT_SYMBOL(nomount_resolve_path);
 
 struct filename *nomount_getname_hook(struct filename *name)
 {
-    char *target_path;
+    const char *target_raw;
+    char *target_copy;
     struct filename *new_name;
     unsigned int pflags;
 
     if (nomount_should_skip() || !name || name->name[0] != '/') 
         return name;
 
-    if (current->flags & PF_MEMALLOC_NOFS) return name;
-
     pflags = memalloc_nofs_save();
     nm_enter();
-    target_path = nomount_resolve_path(name->name);
-
-    if (!target_path) {
+    rcu_read_lock();
+    target_raw = nomount_resolve_path(name->name);
+    
+    if (!target_raw) {
+        rcu_read_unlock();
         nm_exit();
         memalloc_nofs_restore(pflags);
         return name;
     }
 
-    new_name = getname_kernel(target_path); 
-    kfree(target_path);
+    target_copy = kstrdup(target_raw, GFP_ATOMIC);
+    rcu_read_unlock();
+
+    if (!target_copy) {
+        nm_exit();
+        memalloc_nofs_restore(pflags);
+        return name;
+    }
+
+    new_name = getname_kernel(target_copy); 
+    kfree(target_copy);
     
     if (IS_ERR(new_name)) {
         nm_exit();
@@ -382,6 +382,8 @@ struct filename *nomount_getname_hook(struct filename *name)
     }
 
     new_name->uptr = name->uptr;
+    new_name->aname = name->aname;
+
     putname(name); 
     nm_exit();
     memalloc_nofs_restore(pflags);
@@ -751,7 +753,6 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     #ifdef CONFIG_64BIT
         rule->v_ino |= ((unsigned long)full_name_hash(NULL, r_path, strlen(r_path)) << 32);
     #endif
-    rule->v_ino |= 0x8000000000000000UL;
 
     if (nm_ino_adb == 0) {
         nomount_refresh_critical_inodes();
@@ -942,6 +943,9 @@ static long nomount_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
     case NOMOUNT_IOC_ADD_UID: return nomount_ioctl_add_uid(arg);
     case NOMOUNT_IOC_DEL_UID: return nomount_ioctl_del_uid(arg);
     case NOMOUNT_IOC_GET_LIST: return nomount_ioctl_list_rules(arg);
+    case NOMOUNT_IOC_REFRESH: 
+        nomount_force_refresh_all();
+        return 0;
     default: return -EINVAL;
     }
 }
@@ -974,7 +978,7 @@ static int __init nomount_init(void) {
     if (ret) return ret;
     atomic_set(&nomount_enabled, 1);
     pr_info("NoMount: Loaded\n");
-    schedule_delayed_work(&nm_startup_work, HZ * 2);
+    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(500));
     return 0;
 }
 

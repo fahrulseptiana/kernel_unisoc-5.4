@@ -15,7 +15,7 @@
 
 #define NOMOUNT_MAGIC_CODE 0x4E /* 'N' */
 #define NOMOUNT_VERSION    1
-#define NOMOUNT_HASH_BITS  10
+#define NOMOUNT_HASH_BITS  12
 #define NM_FLAG_ACTIVE        (1 << 0)
 #define NM_FLAG_IS_DIR        (1 << 7)
 #define NOMOUNT_MAGIC_POS 0x7000000
@@ -27,6 +27,7 @@
 #define NOMOUNT_IOC_ADD_UID     _IOW(NOMOUNT_IOC_MAGIC, 5, unsigned int)
 #define NOMOUNT_IOC_DEL_UID     _IOW(NOMOUNT_IOC_MAGIC, 6, unsigned int)
 #define NOMOUNT_IOC_GET_LIST _IOR(NOMOUNT_IOC_MAGIC, 7, int)
+#define NOMOUNT_IOC_REFRESH _IO(NOMOUNT_MAGIC_CODE, 8)
 #define MAX_LIST_BUFFER_SIZE (64 * 1024)
 
 struct nomount_ioctl_data {
