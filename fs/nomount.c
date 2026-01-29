@@ -71,9 +71,7 @@ static const struct seq_operations nm_seq_ops = {
 
 /* Critical processes that NoMount should ignore to avoid instability */
 static const char *critical_processes[] = {
-    "init",
     "ueventd",
-    "watchdogd",
     "vold", 
     NULL
 };
@@ -307,13 +305,10 @@ bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
     if (current->flags & PF_MEMALLOC_NOFS) return false;
     if (!(mask & MAY_EXEC)) return false;
 
-    nm_enter();
     if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
         (nm_ino_modules != 0 && inode->i_ino == nm_ino_modules)) {
-        nm_exit();
         return true; 
     }
-    nm_exit();
     return false;
 }
 EXPORT_SYMBOL(nomount_is_traversal_allowed);
@@ -658,31 +653,19 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
 
-    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
             stat->ino = rule->v_ino;
-            if (rule->real_dev)
-                stat->dev = rule->real_dev;
+            if (rule->v_dev != 0)
+                stat->dev = rule->v_dev;
 
-            stat->size = inode->i_size;
-            stat->blocks = inode->i_blocks;
-            stat->atime = inode->i_atime;
-            stat->mtime = inode->i_mtime;
-            stat->ctime = inode->i_ctime;
-            stat->nlink = inode->i_nlink;
-
-            stat->mode = inode->i_mode;
-
-            stat->uid = GLOBAL_ROOT_UID;
-            stat->gid = GLOBAL_ROOT_GID;
-
+            stat->uid = rule->v_uid;
+            stat->gid = rule->v_gid;
             break;
         }
     }
     rcu_read_unlock();
-    nm_exit();
 }
 
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
@@ -696,25 +679,14 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
 
-    nm_enter();
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino) {
-            if (kern_path(rule->virtual_path, LOOKUP_FOLLOW, &v_path) == 0) {
-                if (v_path.dentry->d_sb->s_op->statfs) {
-                    v_path.dentry->d_sb->s_op->statfs(v_path.dentry, buf);
-                }
-                path_put(&v_path);
-            } else {
-                buf->f_blocks = 1024 * 1024;
-                buf->f_bfree = 0;
-                buf->f_bavail = 0;
-            }
+            buf->f_type = rule->v_fs_type;
             break;
         }
     }
     rcu_read_unlock();
-    nm_exit();
 }
 
 /* Forces cache flushing for all active rules. */
@@ -726,13 +698,11 @@ static void nomount_force_refresh_all(void) {
     list_cut_position(&refresh_list, &nomount_rules_list, nomount_rules_list.prev);
     spin_unlock(&nomount_lock);
 
-    nm_enter();
     list_for_each_entry_safe(rule, tmp, &refresh_list, list) {
         if (rule->virtual_path) {
             nomount_flush_dcache(rule->virtual_path);
         }
     }
-    nm_exit();
 
     spin_lock(&nomount_lock);
     list_splice(&refresh_list, &nomount_rules_list);
@@ -743,8 +713,9 @@ static int nomount_ioctl_add_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
     struct nomount_rule *rule;
-    char *v_path, *r_path;
+    char *v_path, *r_path, *parent, *slash;
     struct path path;
+    struct kstatfs tmp_stfs;
     unsigned char type;
     u32 hash, search_hash;
 
@@ -778,16 +749,54 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     rule->real_path = r_path;
     rule->flags = data.flags | NM_FLAG_ACTIVE;
     rule->is_new = false;
-    rule->v_ino = (unsigned long)full_name_hash(NULL, v_path, strlen(v_path));
-    #ifdef CONFIG_64BIT
-        rule->v_ino = (0x4E4D0000UL << 32) | (u32)rule->v_ino;
-    #endif
 
     if (nm_ino_adb == 0) {
         nomount_refresh_critical_inodes();
     }
 
     if (kern_path(v_path, LOOKUP_FOLLOW, &path) == 0) {
+        rule->v_dev = path.dentry->d_sb->s_dev;
+        rule->v_ino = path.dentry->d_inode->i_ino;
+        rule->v_uid = path.dentry->d_inode->i_uid;
+        rule->v_gid = path.dentry->d_inode->i_gid;
+        
+        if (path.dentry->d_sb->s_op->statfs) {
+            path.dentry->d_sb->s_op->statfs(path.dentry, &tmp_stfs);
+            rule->v_fs_type = tmp_stfs.f_type;
+        } else {
+            rule->v_fs_type = path.dentry->d_sb->s_magic;
+        }
+        path_put(&path);
+    } else {
+        struct path p_path;
+        parent = kstrdup(v_path, GFP_KERNEL);
+        slash = parent ? strrchr(parent, '/') : NULL;
+
+        if (parent && slash) {
+            if (slash == parent) *(slash + 1) = '\0';
+            else *slash = '\0';
+
+            if (kern_path(parent, LOOKUP_FOLLOW, &p_path) == 0) {
+                rule->v_dev = p_path.dentry->d_sb->s_dev;
+                rule->v_fs_type = p_path.dentry->d_sb->s_magic;
+                rule->v_uid = p_path.dentry->d_inode->i_uid;
+                rule->v_gid = p_path.dentry->d_inode->i_gid;
+                path_put(&p_path);
+            }
+        }
+        kfree(parent);
+
+        if (uid_eq(rule->v_uid, INVALID_UID)) rule->v_uid = GLOBAL_ROOT_UID;
+        if (gid_eq(rule->v_gid, INVALID_GID)) rule->v_gid = GLOBAL_ROOT_GID;
+        if (rule->v_fs_type == 0) rule->v_fs_type = 0xEF53; 
+
+        rule->v_ino = (unsigned long)full_name_hash(NULL, v_path, strlen(v_path));
+    #ifdef CONFIG_64BIT
+        rule->v_ino = (0x4E4D0000UL << 32) | (u32)rule->v_ino;
+    #endif
+    }
+
+    if (kern_path(r_path, LOOKUP_FOLLOW, &path) == 0) {
         rule->real_ino = path.dentry->d_inode->i_ino;
         rule->real_dev = path.dentry->d_sb->s_dev;
         path_put(&path);

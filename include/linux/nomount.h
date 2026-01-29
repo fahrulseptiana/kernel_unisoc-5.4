@@ -46,6 +46,10 @@ struct nomount_rule {
     unsigned long parent_ino;
     unsigned long v_ino;
     dev_t real_dev;
+    dev_t v_dev;
+    long v_fs_type;
+    kuid_t v_uid;
+    kgid_t v_gid;
     bool is_new;
     u32 flags;
     struct rcu_head rcu; 
