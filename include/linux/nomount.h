@@ -38,7 +38,15 @@ struct nomount_ioctl_data {
 };
 
 struct nomount_rule {
-    struct hlist_node node;
+    /* hash by virtual path */
+    struct hlist_node vpath_node;
+
+    /* hash by real inode */
+    struct hlist_node real_ino_node;
+
+    /* hash by virtual inode */
+    struct hlist_node v_ino_node;
+
     struct list_head list;
     size_t vp_len;
     char *virtual_path;
@@ -78,6 +86,7 @@ struct nomount_child_name {
 struct nomount_uid_node {
     uid_t uid;
     struct hlist_node node;
+    struct list_head list;
     struct rcu_head rcu;
 };
 

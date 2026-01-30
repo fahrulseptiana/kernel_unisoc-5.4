@@ -21,6 +21,11 @@
 #include <linux/pkeys.h>
 #include <linux/mm_inline.h>
 #include <linux/ctype.h>
+
+#ifdef CONFIG_NOMOUNT
+#include <linux/nomount.h>
+#endif
+
 #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP)
 #include <linux/susfs_def.h>
 #endif
@@ -433,6 +438,16 @@ bypass_orig_flow:
 		dentry = file->f_path.dentry;
 		if (dentry) {
 			const char *path = (const char *)dentry->d_name.name;
+
+#ifdef CONFIG_NOMOUNT
+			if (nomount_resolve_path(path) != NULL) {
+				start = vma->vm_start;
+				end = vma->vm_end;
+				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
+				name = NULL;
+				goto done;
+			}
+#endif
 			if (strstr(path, "lineage")) {
 			start = vma->vm_start;
 			end = vma->vm_end;
