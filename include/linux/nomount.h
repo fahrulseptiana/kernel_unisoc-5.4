@@ -29,6 +29,7 @@
 #define NOMOUNT_IOC_GET_LIST _IOR(NOMOUNT_IOC_MAGIC, 7, int)
 #define NOMOUNT_IOC_REFRESH _IO(NOMOUNT_MAGIC_CODE, 8)
 #define MAX_LIST_BUFFER_SIZE (64 * 1024)
+#define NM_MAX_PARENTS 16
 
 struct nomount_ioctl_data {
     char __user *virtual_path;
@@ -50,6 +51,10 @@ struct nomount_rule {
     long v_fs_type;
     kuid_t v_uid;
     kgid_t v_gid;
+
+    unsigned int parent_count;
+    unsigned long parent_inos[NM_MAX_PARENTS];
+
     bool is_new;
     u32 flags;
     struct rcu_head rcu; 
@@ -94,11 +99,13 @@ static inline bool nm_is_recursive(void) {
 }
 
 bool nomount_should_skip(void);
+bool nomount_should_skip_readlink(void);
 char *nomount_resolve_path(const char *pathname);
 struct filename *nomount_getname_hook(struct filename *name);
 void nomount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos);
 void nomount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos);
 const char *nomount_get_static_vpath(struct inode *inode);
+const char *nomount_get_static_vpath_readlink(struct inode *inode);
 bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 bool nomount_is_injected_file(struct inode *inode);
 void nomount_spoof_stat(const struct path *path, struct kstat *stat);

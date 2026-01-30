@@ -95,6 +95,9 @@
 #include <linux/sched/stat.h>
 #include <linux/posix-timers.h>
 #include <linux/cpufreq_times.h>
+#ifdef CONFIG_NOMOUNT
+#include <linux/nomount.h>
+#endif
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 #include <linux/susfs_def.h>
 #endif
@@ -1669,8 +1672,55 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 	char *pathname;
 	int len;
 
+#ifdef CONFIG_NOMOUNT
+	const char *vpath = NULL;
+	struct dentry *d = path->dentry;
+	bool should_skip;
+#endif
+
 	if (!tmp)
 		return -ENOMEM;
+
+#ifdef CONFIG_NOMOUNT
+	if (path->dentry && d_backing_inode(path->dentry)) {
+		nm_enter();
+
+		if (!strcmp(current->comm, "main") || !strcmp(current->comm, "zygote") || !strcmp(current->comm, "zygote64") || !strcmp(current->comm, "system_server")) {
+			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
+			if (vpath) {
+				len = strlen(vpath);
+				if (len < buflen && len < PAGE_SIZE) {
+					if (copy_to_user(buffer, vpath, len) == 0) {
+						nm_exit();
+						free_page((unsigned long)tmp);
+						return len;
+					}
+				}
+			}
+		}
+		should_skip = nomount_should_skip_readlink();
+		if (!should_skip) {
+			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
+			if (vpath) {
+				len = strlen(vpath);
+				if (len < buflen && len < PAGE_SIZE) {
+					if (copy_to_user(buffer, vpath, len) == 0) {
+						nm_exit();
+						free_page((unsigned long)tmp);
+						return len;
+					}
+				}
+			} else {
+				if (d && d->d_name.name &&
+					strcmp(d->d_name.name, "framework.jar") == 0) {
+					printk("NoMount: No rule found, process %s (pid=%d, flags=0x%x)\n",
+					current->comm, current->pid, current->flags);
+				}
+			}
+		}
+		nm_exit();
+	}
+#endif
 
 	pathname = d_path(path, tmp, PAGE_SIZE);
 	len = PTR_ERR(pathname);

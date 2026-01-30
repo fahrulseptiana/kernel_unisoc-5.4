@@ -48,6 +48,7 @@
 
 #ifdef CONFIG_NOMOUNT
 #include <linux/nomount.h>
+#include <linux/sched/mm.h>
 #endif
 
 #ifdef CONFIG_SELINUX_AVC_BACKTRACE
@@ -3961,7 +3962,35 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 	struct filename *fake_pathname;
 #endif
+#ifdef CONFIG_NOMOUNT
+    struct filename *nm_name = pathname;
+    const char *real_path;
+    unsigned int pflags;
 
+    if (likely(pathname && pathname->name) &&
+        !nomount_should_skip()) {
+
+        pflags = memalloc_nofs_save();
+
+        rcu_read_lock();
+        real_path = nomount_resolve_path(pathname->name);
+        if (real_path) {
+            struct filename *new;
+
+            new = getname_kernel(real_path);
+            if (!IS_ERR(new)) {
+                new->uptr  = pathname->uptr;
+                new->aname = pathname->aname;
+
+                putname(pathname);
+                nm_name = new;
+            }
+        }
+        rcu_read_unlock();
+
+        memalloc_nofs_restore(pflags);
+    }
+#endif
 	set_nameidata(&nd, dfd, pathname);
 	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
 	if (unlikely(filp == ERR_PTR(-ECHILD)))
@@ -3988,6 +4017,10 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	}
 #endif
 	restore_nameidata();
+#ifdef CONFIG_NOMOUNT
+    if (nm_name != pathname)
+        putname(nm_name);
+#endif
 	return filp;
 }
 

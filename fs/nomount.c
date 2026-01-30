@@ -23,6 +23,10 @@ atomic_t nomount_enabled = ATOMIC_INIT(0);
 EXPORT_SYMBOL(nomount_enabled);
 #define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
 
+#ifdef CONFIG_KSU
+extern bool ksu_boot_completed;
+#endif
+
 struct linux_dirent {
     unsigned long   d_ino;
     unsigned long   d_off;
@@ -71,6 +75,7 @@ static const struct seq_operations nm_seq_ops = {
 
 /* Critical processes that NoMount should ignore to avoid instability */
 static const char *critical_processes[] = {
+    "init",
     "ueventd",
     "vold", 
     NULL
@@ -104,6 +109,11 @@ bool nomount_should_skip(void) {
     if (NOMOUNT_DISABLED())
         return true;
 
+#ifdef CONFIG_KSU
+    if (ksu_boot_completed && !nomount_is_critical_process())
+        return false;
+#endif
+    
     if (nm_is_recursive()) 
         return true;
     
@@ -129,6 +139,31 @@ bool nomount_should_skip(void) {
     return false;
 }
 EXPORT_SYMBOL(nomount_should_skip);
+
+bool nomount_should_skip_readlink(void) {
+    /* Skip if disabled */
+    if (NOMOUNT_DISABLED())
+        return true;
+
+#ifdef CONFIG_KSU
+    if (ksu_boot_completed && !nomount_is_critical_process())
+        return false;
+#endif
+
+    if (nm_is_recursive()) 
+        return true;
+    
+    // Skip in interrupt/NMI context
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress))
+        return true;
+
+    // Skip if current task is NULL or invalid
+    if (!current)
+        return true;
+
+    return false;
+}
+EXPORT_SYMBOL(nomount_should_skip_readlink);
 
 static bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
@@ -253,6 +288,24 @@ const char *nomount_get_static_vpath(struct inode *inode) {
 }
 EXPORT_SYMBOL(nomount_get_static_vpath);
 
+const char *nomount_get_static_vpath_readlink(struct inode *inode) {
+    struct nomount_rule *rule;
+    const char *path_ptr = NULL;
+
+    if (!inode || NOMOUNT_DISABLED()) return NULL;
+
+    rcu_read_lock();
+    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
+        if (rule->real_ino == inode->i_ino || rule->v_ino == inode->i_ino) {
+            path_ptr = rule->virtual_path;
+            break;
+        }
+    }
+    rcu_read_unlock();
+    return path_ptr;
+}
+EXPORT_SYMBOL(nomount_get_static_vpath_readlink);
+
 static unsigned long nomount_get_inode_by_path(const char *path_str) {
     struct path path;
     unsigned long ino = 0;
@@ -300,15 +353,27 @@ static void nomount_refresh_critical_inodes(void) {
     }
 }
 
-bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
-    if (!inode || NOMOUNT_DISABLED()) return false;
-    if (current->flags & PF_MEMALLOC_NOFS) return false;
-    if (!(mask & MAY_EXEC)) return false;
+bool nomount_is_traversal_allowed(struct inode *inode, int mask)
+{
+    struct nomount_rule *rule;
+    int i;
 
-    if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
-        (nm_ino_modules != 0 && inode->i_ino == nm_ino_modules)) {
-        return true; 
+    if (!inode || NOMOUNT_DISABLED())
+        return false;
+
+    if (!(mask & MAY_EXEC))
+        return false;
+
+    rcu_read_lock();
+    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
+        for (i = 0; i < rule->parent_count; i++) {
+            if (rule->parent_inos[i] == inode->i_ino) {
+                rcu_read_unlock();
+                return true;
+            }
+        }
     }
+    rcu_read_unlock();
     return false;
 }
 EXPORT_SYMBOL(nomount_is_traversal_allowed);
@@ -674,19 +739,27 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     struct inode *inode;
     struct path v_path;
 
-    if (!path || !buf || nomount_should_skip()) return;
+    if (!path || !buf) return;
 
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
 
+    nm_enter();
     rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_ht, rule, node, inode->i_ino) {
+    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
         if (rule->real_ino == inode->i_ino) {
-            buf->f_type = rule->v_fs_type;
-            break;
+            rcu_read_unlock();
+            if (kern_path(rule->virtual_path, LOOKUP_FOLLOW, &v_path) == 0) {
+                buf->f_type = v_path.dentry->d_sb->s_magic;
+                path_put(&v_path);
+            }
+            
+            nm_exit();
+            return;
         }
     }
     rcu_read_unlock();
+    nm_exit();
 }
 
 /* Forces cache flushing for all active rules. */
@@ -707,6 +780,36 @@ static void nomount_force_refresh_all(void) {
     spin_lock(&nomount_lock);
     list_splice(&refresh_list, &nomount_rules_list);
     spin_unlock(&nomount_lock);
+}
+
+static void nomount_collect_parent_inodes(struct nomount_rule *rule)
+{
+    char *path, *p;
+    struct path kern_p;
+    int count = 0;
+
+    path = kstrdup(rule->real_path, GFP_KERNEL);
+    if (!path)
+        return;
+
+    p = path;
+
+    while (count < NM_MAX_PARENTS) {
+        char *slash = strrchr(p, '/');
+        if (!slash || slash == p)
+            break;
+
+        *slash = '\0';
+
+        if (kern_path(p, LOOKUP_FOLLOW, &kern_p) == 0) {
+            rule->parent_inos[count++] =
+                d_backing_inode(kern_p.dentry)->i_ino;
+            path_put(&kern_p);
+        }
+    }
+
+    rule->parent_count = count;
+    kfree(path);
 }
 
 static int nomount_ioctl_add_rule(unsigned long arg)
@@ -800,6 +903,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         rule->real_ino = path.dentry->d_inode->i_ino;
         rule->real_dev = path.dentry->d_sb->s_dev;
         path_put(&path);
+        nomount_collect_parent_inodes(rule);
     } else {
         rule->real_ino = 0;
     }
@@ -856,7 +960,7 @@ static int nomount_ioctl_del_rule(unsigned long arg)
         call_rcu(&rule->rcu, nomount_free_rule_rcu);
     }
 
-    kfree(v_path);
+    kfree_rcu(rule, rcu);
     return found ? 0 : -ENOENT;
 }
 

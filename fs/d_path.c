@@ -270,12 +270,15 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	int error;
 
 #ifdef CONFIG_NOMOUNT
+	const char *v_path;
+	int len;
+
     if (path->dentry && path->dentry->d_inode && !nomount_should_skip()) {
 		nm_enter();
-        const char *v_path = nomount_get_static_vpath(path->dentry->d_inode);
+        v_path = nomount_get_static_vpath(path->dentry->d_inode);
         
         if (v_path) {
-            int len = strlen(v_path);
+            len = strlen(v_path);
             if (buflen >= len + 1) {
                 res = buf + buflen - 1;
                 *res = '\0';
