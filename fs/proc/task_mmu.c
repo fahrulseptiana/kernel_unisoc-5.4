@@ -440,12 +440,8 @@ bypass_orig_flow:
 			const char *path = (const char *)dentry->d_name.name;
 
 #ifdef CONFIG_NOMOUNT
-			if (nomount_resolve_path(path) != NULL) {
-				start = vma->vm_start;
-				end = vma->vm_end;
-				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
-				name = NULL;
-				goto done;
+			if (!nomount_should_skip()) {
+				nomount_spoof_mmap_metadata(inode, &dev, &ino);
 			}
 #endif
 			if (strstr(path, "lineage")) {

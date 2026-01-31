@@ -23,10 +23,6 @@ atomic_t nomount_enabled = ATOMIC_INIT(0);
 EXPORT_SYMBOL(nomount_enabled);
 #define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
 
-#ifdef CONFIG_KSU
-extern bool ksu_boot_completed;
-#endif
-
 struct linux_dirent {
     unsigned long   d_ino;
     unsigned long   d_off;
@@ -109,11 +105,6 @@ bool nomount_should_skip(void) {
     /* Skip if disabled */
     if (NOMOUNT_DISABLED())
         return true;
-
-#ifdef CONFIG_KSU
-    if (ksu_boot_completed && !nomount_is_critical_process())
-        return false;
-#endif
     
     if (nm_is_recursive()) 
         return true;
@@ -145,11 +136,6 @@ bool nomount_should_skip_readlink(void) {
     /* Skip if disabled */
     if (NOMOUNT_DISABLED())
         return true;
-
-#ifdef CONFIG_KSU
-    if (ksu_boot_completed && !nomount_is_critical_process())
-        return false;
-#endif
 
     if (nm_is_recursive()) 
         return true;
@@ -335,6 +321,32 @@ static unsigned long nomount_get_inode_by_path(const char *path_str) {
     memalloc_nofs_restore(pflags);
     return ino;
 }
+
+bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino)
+{
+    struct nomount_rule *rule;
+    bool found = false;
+
+    if (!inode || !dev || !ino || NOMOUNT_DISABLED())
+        return false;
+
+    if (nomount_should_skip())
+        return false;
+
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, inode->i_ino) {
+        if (rule->real_ino == inode->i_ino) {
+            *dev = rule->v_dev;
+            *ino = rule->v_ino;
+            found = true;
+            break;
+        }
+    }
+    rcu_read_unlock();
+
+    return found;
+}
+EXPORT_SYMBOL(nomount_spoof_mmap_metadata);
 
 static void nomount_refresh_critical_inodes(void) {
     unsigned long current_adb = 0, current_mod = 0, ino = 0;

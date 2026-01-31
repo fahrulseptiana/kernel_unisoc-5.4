@@ -109,6 +109,7 @@ static inline bool nm_is_recursive(void) {
 
 bool nomount_should_skip(void);
 bool nomount_should_skip_readlink(void);
+bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
 char *nomount_resolve_path(const char *pathname);
 struct filename *nomount_getname_hook(struct filename *name);
 void nomount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos);
