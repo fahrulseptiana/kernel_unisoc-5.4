@@ -28,7 +28,7 @@
 #define NOMOUNT_IOC_DEL_UID     _IOW(NOMOUNT_IOC_MAGIC, 6, unsigned int)
 #define NOMOUNT_IOC_GET_LIST _IOR(NOMOUNT_IOC_MAGIC, 7, int)
 #define NOMOUNT_IOC_REFRESH _IO(NOMOUNT_MAGIC_CODE, 8)
-#define MAX_LIST_BUFFER_SIZE (64 * 1024)
+#define MAX_LIST_BUFFER_SIZE (128 * 1024)
 #define NM_MAX_PARENTS 16
 
 struct nomount_ioctl_data {
@@ -57,8 +57,6 @@ struct nomount_rule {
     dev_t real_dev;
     dev_t v_dev;
     long v_fs_type;
-    kuid_t v_uid;
-    kgid_t v_gid;
 
     unsigned int parent_count;
     unsigned long parent_inos[NM_MAX_PARENTS];
@@ -73,6 +71,7 @@ struct nomount_dir_node {
     char *dir_path;              
     unsigned long dir_ino;
     struct list_head children_names; 
+    unsigned long next_child_index; /* next v_index to assign */
     struct rcu_head rcu;
 };
 
@@ -80,6 +79,8 @@ struct nomount_child_name {
     struct list_head list;
     char *name;                  
     unsigned char d_type;
+    unsigned long fake_ino;      /* deterministic fake inode for injected entries */
+    unsigned long v_index;       /* stable injected index used for d_off mapping */
     struct rcu_head rcu;
 };
 
@@ -108,7 +109,6 @@ static inline bool nm_is_recursive(void) {
 }
 
 bool nomount_should_skip(void);
-bool nomount_should_skip_readlink(void);
 bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
 char *nomount_resolve_path(const char *pathname);
 struct filename *nomount_getname_hook(struct filename *name);
