@@ -446,39 +446,124 @@ EXPORT_SYMBOL(nomount_resolve_path);
 
 struct filename *nomount_getname_hook(struct filename *name)
 {
-    char *target_raw;
-    struct filename *new_name;
+    char *target_raw = NULL;
+    struct filename *new_name = NULL;
     unsigned int pflags;
+    struct nomount_rule *rule = NULL;
+    struct nomount_rule *candidate = NULL;
+    char *vcopy = NULL, *rcopy = NULL;
+    size_t name_len;
 
-    if (nomount_should_skip() || !name || !name->name) 
+    if (nomount_should_skip() || !name || !name->name)
         return name;
 
-    pflags = memalloc_nofs_save();
-
+    /* Fast-path: exact mapping */
     rcu_read_lock();
     target_raw = nomount_resolve_path(name->name);
-    
-    if (!target_raw) {
+    if (target_raw) {
+        target_raw = kstrdup(target_raw, GFP_ATOMIC);
         rcu_read_unlock();
-        memalloc_nofs_restore(pflags);
+        if (!target_raw) return name;
+        goto perform_getname;
+    }
+
+    /* Prefix match logic */
+    name_len = strlen(name->name);
+    candidate = NULL;
+    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
+        if (strncmp(rule->virtual_path, name->name, name_len) == 0) {
+            if (rule->virtual_path[name_len] == '/' || rule->virtual_path[name_len] == '\0') {
+                candidate = rule;
+                break;
+            }
+        }
+    }
+
+    if (!candidate) {
+        rcu_read_unlock();
         return name;
     }
 
-    new_name = getname_kernel(target_raw); 
+    vcopy = kmalloc(PATH_MAX, GFP_ATOMIC);
+    rcopy = kmalloc(PATH_MAX, GFP_ATOMIC);
+    if (!vcopy || !rcopy) {
+        kfree(vcopy); kfree(rcopy);
+        rcu_read_unlock();
+        return name;
+    }
+
+    strlcpy(vcopy, candidate->virtual_path, PATH_MAX);
+    strlcpy(rcopy, candidate->real_path, PATH_MAX);
     rcu_read_unlock();
 
-    if (IS_ERR(new_name)) {
-        memalloc_nofs_restore(pflags);
-        return name;
+    /* Stripping */
+    {
+        int v_comp = 0, req_comp = 0, i;
+        size_t vlen = strlen(vcopy);
+        i = 0;
+        while (i < (int)vlen) {
+            while (i < (int)vlen && vcopy[i] == '/') i++;
+            if (i >= (int)vlen) break;
+            v_comp++;
+            while (i < (int)vlen && vcopy[i] != '/') i++;
+        }
+        i = 0;
+        while (i < (int)name_len) {
+            while (i < (int)name_len && name->name[i] == '/') i++;
+            if (i >= (int)name_len) break;
+            req_comp++;
+            while (i < (int)name_len && name->name[i] != '/') i++;
+        }
+
+        if (v_comp > req_comp) {
+            int to_strip = v_comp - req_comp;
+            char *p = rcopy + strlen(rcopy);
+            while (to_strip > 0 && p > rcopy) {
+                while (p > rcopy && *p != '/') p--;
+                if (p > rcopy) *p = '\0';
+                to_strip--;
+            }
+        }
     }
+
+    pflags = memalloc_nofs_save();
+    nm_enter();
+    {
+        struct path tmp_path_real, tmp_path_virt;
+        bool exists_real = (kern_path(name->name, LOOKUP_FOLLOW, &tmp_path_real) == 0);
+        if (exists_real) path_put(&tmp_path_real);
+
+        bool exists_virt = (kern_path(rcopy, LOOKUP_FOLLOW, &tmp_path_virt) == 0);
+        if (exists_virt) path_put(&tmp_path_virt);
+
+        if (!exists_real && exists_virt) {
+            target_raw = kstrdup(rcopy, GFP_KERNEL);
+        }
+    }
+    nm_exit();
+    memalloc_nofs_restore(pflags);
+
+    kfree(vcopy);
+    kfree(rcopy);
+
+    if (!target_raw)
+        return name;
+
+perform_getname:
+    pflags = memalloc_nofs_save();
+    new_name = getname_kernel(target_raw);
+    memalloc_nofs_restore(pflags);
+    kfree(target_raw);
+
+    if (IS_ERR(new_name) || !new_name)
+        return name;
 
     new_name->uptr = name->uptr;
     new_name->aname = name->aname;
-
-    putname(name); 
-    memalloc_nofs_restore(pflags);
+    putname(name);
     return new_name;
 }
+EXPORT_SYMBOL(nomount_getname_hook);
 
 static bool nomount_find_next_injection(unsigned long dir_ino, unsigned long v_index, char *name_out, unsigned char *type_out, unsigned long *fake_ino_out)
 {
@@ -639,75 +724,117 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
 
 static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
 {
-    char *parent_path, *name, *path_copy, *last_slash;
+    char *copy = NULL;
+    char *comps[64];
+    int ncomp = 0, i;
+    char prefix[PATH_MAX];
     struct nomount_dir_node *dir_node = NULL, *curr;
     struct nomount_child_name *child;
-    unsigned long parent_ino;
+    unsigned long prefix_ino;
     struct path path;
+    unsigned int pflags;
 
-    path_copy = kstrdup(v_path, GFP_KERNEL);
-    if (!path_copy) return;
+    if (!v_path)
+        return;
 
-    last_slash = strrchr(path_copy, '/');
-    if (!last_slash || last_slash == path_copy) {
-        kfree(path_copy);
+    copy = kstrdup(v_path, GFP_KERNEL);
+    if (!copy)
+        return;
+
+    /* tokenize components */
+    {
+        char *p = copy;
+        if (*p == '/') p++; /* skip leading slash */
+        while (p && *p && ncomp < ARRAY_SIZE(comps)) {
+            char *s = strchr(p, '/');
+            if (s) {
+                *s = '\0';
+                comps[ncomp++] = p;
+                p = s + 1;
+            } else {
+                comps[ncomp++] = p;
+                break;
+            }
+        }
+    }
+
+    if (ncomp < 1) {
+        kfree(copy);
         return;
     }
 
-    *last_slash = '\0';
-    parent_path = path_copy;
-    name = last_slash + 1;
-
-    if (kern_path(parent_path, LOOKUP_FOLLOW, &path) == 0) {
-        parent_ino = path.dentry->d_inode->i_ino;
-        path_put(&path);
-    } else {
-        parent_ino = (unsigned long)full_name_hash(NULL, parent_path, strlen(parent_path));
-    }
-
-    spin_lock(&nomount_lock);
-    hash_for_each_possible(nomount_dirs_ht, curr, node, parent_ino) {
-        if (curr->dir_ino == parent_ino) {
-            dir_node = curr;
-            break;
+    pflags = memalloc_nofs_save();
+    nm_enter();
+    prefix[0] = '\0';
+    for (i = 0; i < ncomp - 1; i++) {
+        int j;
+        /* build prefix */
+        if (i == 0)
+            snprintf(prefix, sizeof(prefix), "/%s", comps[0]);
+        else {
+            /* append "/comps[i]" */
+            strlcat(prefix, "/", sizeof(prefix));
+            strlcat(prefix, comps[i], sizeof(prefix));
         }
-    }
 
-    if (!dir_node) {
-        dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
+        if (kern_path(prefix, LOOKUP_FOLLOW, &path) == 0) {
+            prefix_ino = d_backing_inode(path.dentry)->i_ino;
+            path_put(&path);
+        } else {
+            prefix_ino = (unsigned long)full_name_hash(NULL, prefix, strlen(prefix));
+        }
+
+        /* now ensure dir_node exists and next child is present */
+        spin_lock(&nomount_lock);
+        dir_node = NULL;
+        hash_for_each_possible(nomount_dirs_ht, curr, node, prefix_ino) {
+            if (curr->dir_ino == prefix_ino) {
+                dir_node = curr;
+                break;
+            }
+        }
+
+        if (!dir_node) {
+            dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
+            if (dir_node) {
+                dir_node->dir_path = kstrdup(prefix, GFP_ATOMIC);
+                dir_node->dir_ino = prefix_ino;
+                INIT_LIST_HEAD(&dir_node->children_names);
+                dir_node->next_child_index = 0;
+                hash_add_rcu(nomount_dirs_ht, &dir_node->node, prefix_ino);
+            }
+        }
+
         if (dir_node) {
-            dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
-            dir_node->dir_ino = parent_ino;
-            INIT_LIST_HEAD(&dir_node->children_names);
-            dir_node->next_child_index = 0;
-            hash_add_rcu(nomount_dirs_ht, &dir_node->node, parent_ino);
-        }
-    }
-
-    if (dir_node) {
-        bool exists = false;
-        list_for_each_entry(child, &dir_node->children_names, list) {
-            if (strcmp(child->name, name) == 0) {
-                exists = true; break;
+            bool exists = false;
+            const char *next_comp = comps[i + 1];
+            list_for_each_entry(child, &dir_node->children_names, list) {
+                if (strcmp(child->name, next_comp) == 0) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                struct nomount_child_name *newch = kzalloc(sizeof(*newch), GFP_ATOMIC);
+                if (newch) {
+                    newch->name = kstrdup(next_comp, GFP_ATOMIC);
+                    newch->d_type = (i < ncomp - 2) ? DT_DIR : type;
+                    /* deterministic fake ino based on virtual prefix + name */
+                    {
+                        char tmpfull[PATH_MAX];
+                        snprintf(tmpfull, sizeof(tmpfull), "%s/%s", prefix, next_comp);
+                        newch->fake_ino = (unsigned long)full_name_hash(NULL, tmpfull, strlen(tmpfull));
+                    }
+                    newch->v_index = dir_node->next_child_index++;
+                    list_add_tail_rcu(&newch->list, &dir_node->children_names);
+                }
             }
         }
-        if (!exists) {
-            child = kzalloc(sizeof(*child), GFP_ATOMIC);
-            if (child) {
-                child->name = kstrdup(name, GFP_ATOMIC);
-                /* use DT_* macros for portability */
-                child->d_type = (type == DT_DIR) ? DT_DIR : DT_REG;
-                /* stable fake inode based on full virtual path */
-                child->fake_ino = (unsigned long)full_name_hash(NULL, v_path, strlen(v_path));
-                /* assign stable index under lock */
-                child->v_index = dir_node->next_child_index++;
-                list_add_tail_rcu(&child->list, &dir_node->children_names);
-            }
-        }
+        spin_unlock(&nomount_lock);
     }
-    spin_unlock(&nomount_lock);
     nm_exit();
-    kfree(path_copy);
+    memalloc_nofs_restore(pflags);
+    kfree(copy);
 }
 
 void nomount_spoof_stat(const struct path *path, struct kstat *stat)
