@@ -17,6 +17,7 @@
 #include <linux/statfs.h>
 #include <linux/workqueue.h>
 #include <linux/seq_file.h>
+#include <linux/xattr.h>
 #include <linux/nomount.h> 
 
 atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -724,6 +725,72 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
     nm_exit();
     kfree(path_copy);
 }
+
+ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size)
+{
+    struct nomount_rule *rule;
+    struct path real_path;
+    ssize_t ret;
+
+    if (nomount_should_skip() || !dentry || !dentry->d_inode)
+        return -EOPNOTSUPP;
+
+    rcu_read_lock();
+    // we check if this dentry is one of our injected files
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, dentry->d_inode->i_ino) {
+        if (rule->real_ino == dentry->d_inode->i_ino) {
+            rcu_read_unlock();
+            
+            // if it's an injected file, we redirect the request to the REAL file.
+            nm_enter();
+            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
+                // we use vfs_getxattr from the actual (source) file
+                ret = vfs_getxattr(real_path.dentry, name, value, size);
+                path_put(&real_path);
+                nm_exit();
+                return ret;
+            }
+            nm_exit();
+            return -ENOENT;
+        }
+    }
+    rcu_read_unlock();
+
+    return -EOPNOTSUPP; // it is not a file injected by NoMount
+}
+EXPORT_SYMBOL(nomount_getxattr_hook);
+
+int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
+{
+    struct nomount_rule *rule;
+    struct path real_path;
+    int ret;
+
+    if (nomount_should_skip() || !dentry || !dentry->d_inode)
+        return -EOPNOTSUPP;
+
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, dentry->d_inode->i_ino) {
+        if (rule->real_ino == dentry->d_inode->i_ino) {
+            rcu_read_unlock();
+
+            nm_enter();
+            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
+                // redirect attribute writing to the source file
+                ret = vfs_setxattr(real_path.dentry, name, value, size, flags);
+                path_put(&real_path);
+                nm_exit();
+                return ret;
+            }
+            nm_exit();
+            return -ENOENT;
+        }
+    }
+    rcu_read_unlock();
+
+    return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL(nomount_setxattr_hook);
 
 void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 {

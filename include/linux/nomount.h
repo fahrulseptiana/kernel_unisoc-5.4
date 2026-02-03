@@ -125,6 +125,8 @@ const char *nomount_get_static_vpath(struct inode *inode);
 const char *nomount_get_static_vpath_readlink(struct inode *inode);
 bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 bool nomount_is_injected_file(struct inode *inode);
+ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size);
+int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags);
 void nomount_spoof_stat(const struct path *path, struct kstat *stat);
 struct kstatfs;
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
