@@ -57,6 +57,8 @@ struct nomount_rule {
     dev_t real_dev;
     dev_t v_dev;
     long v_fs_type;
+    kuid_t v_uid;
+    kgid_t v_gid;
 
     unsigned int parent_count;
     unsigned long parent_inos[NM_MAX_PARENTS];
@@ -97,18 +99,23 @@ extern atomic_t nomount_enabled;
 DECLARE_PER_CPU(int, nm_recursion_level);
 
 static inline void nm_enter(void) {
-    this_cpu_inc(nm_recursion_level);
+    preempt_disable();
+    __this_cpu_inc(nm_recursion_level);
+    preempt_enable();
 }
 
 static inline void nm_exit(void) {
-    this_cpu_dec(nm_recursion_level);
+    preempt_disable();
+    __this_cpu_dec(nm_recursion_level);
+    preempt_enable();
 }
 
 static inline bool nm_is_recursive(void) {
-    return this_cpu_read(nm_recursion_level) > 0;
+    return __this_cpu_read(nm_recursion_level) > 0;
 }
 
 bool nomount_should_skip(void);
+bool nomount_should_skip_readlink(void);
 bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
 char *nomount_resolve_path(const char *pathname);
 struct filename *nomount_getname_hook(struct filename *name);

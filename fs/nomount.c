@@ -132,6 +132,18 @@ bool nomount_should_skip(void) {
 }
 EXPORT_SYMBOL(nomount_should_skip);
 
+bool nomount_should_skip_readlink(void) {
+    /* Skip if disabled */
+    if (NOMOUNT_DISABLED())
+        return true;
+
+    if (nm_is_recursive()) 
+        return true;
+
+    return false;
+}
+EXPORT_SYMBOL(nomount_should_skip_readlink);
+
 static bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
     if (nomount_should_skip()) return false;
@@ -420,7 +432,7 @@ static void nomount_startup_check(struct work_struct *work) {
     }
 
     pr_info("NoMount: Waiting for /data...\n");
-    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(5000));
+    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(500));
 }
 
 char *nomount_resolve_path(const char *pathname) {
@@ -454,7 +466,8 @@ struct filename *nomount_getname_hook(struct filename *name)
         return name;
 
     pflags = memalloc_nofs_save();
-
+    
+    /* Entramos en RCU para buscar la regla */
     rcu_read_lock();
     target_raw = nomount_resolve_path(name->name);
     
@@ -514,6 +527,7 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
     unsigned long v_index, fake_ino, dir_ino;
     int name_len, reclen;
     struct dentry *parent, *check_dentry;
+    unsigned long child_fake_ino;
 
     if (!file || !file->f_path.dentry || !d_backing_inode(file->f_path.dentry) ||
         !dirent || !count || !pos) return;
@@ -529,9 +543,9 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
         v_index = 0;
         *pos = NOMOUNT_MAGIC_POS;
     }
-
+    nm_enter();
     while (1) {
-        unsigned long child_fake_ino = 0;
+        child_fake_ino = 0;
         if (!nomount_find_next_injection(dir_ino, v_index, name_buf, &type_buf, &child_fake_ino)) 
             break;
 
@@ -594,7 +608,8 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
         v_index = 0;
         *pos = NOMOUNT_MAGIC_POS;
     }
-
+    
+    nm_enter();
     while (1) {
         unsigned long child_fake_ino = 0;
         if (!nomount_find_next_injection(dir_ino, v_index, name_buf, &type_buf, &child_fake_ino)) 
@@ -657,7 +672,7 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
     *last_slash = '\0';
     parent_path = path_copy;
     name = last_slash + 1;
-
+    nm_enter();
     if (kern_path(parent_path, LOOKUP_FOLLOW, &path) == 0) {
         parent_ino = path.dentry->d_inode->i_ino;
         path_put(&path);
@@ -883,7 +898,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
             }
         }
         kfree(parent);
-
+        
         if (rule->v_fs_type == 0) rule->v_fs_type = 0xEF53; 
 
         rule->v_ino = (unsigned long)full_name_hash(NULL, v_path, strlen(v_path));
@@ -1066,7 +1081,6 @@ static int nomount_ioctl_add_uid(unsigned long arg)
     if (!entry) return -ENOMEM;
 
     entry->uid = uid;
-    INIT_LIST_HEAD(&entry->list);
     
     spin_lock(&nomount_lock);
     hash_add_rcu(nomount_uid_ht, &entry->node, uid);
@@ -1097,8 +1111,7 @@ static int nomount_ioctl_del_uid(unsigned long arg)
     spin_unlock(&nomount_lock);
 
     if (found && entry) {
-        /* free after RCU grace period since it was in an RCU-protected hash */
-        kfree_rcu(entry, rcu);
+        kfree(entry); 
     }
 
     return found ? 0 : -ENOENT;
@@ -1153,7 +1166,7 @@ static int __init nomount_init(void) {
     if (ret) return ret;
     atomic_set(&nomount_enabled, 1);
     pr_info("NoMount: Loaded\n");
-    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(5000));
+    schedule_delayed_work(&nm_startup_work, msecs_to_jiffies(500));
     return 0;
 }
 
