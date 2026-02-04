@@ -757,7 +757,7 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
                     old_cred = override_creds(new_cred);
                     /* we use __vfs_getxattr from the actual (source) file
                         to skip SELinux and permissions checks */
-                    ret = __vfs_getxattr(real_path.dentry, real_path.dentry->d_inode, name, value, size);
+                    ret = __vfs_getxattr(real_path.dentry, real_path.dentry->d_inode, name, value, size, 0);
 
                     revert_creds(old_cred);
                     put_cred(new_cred);
@@ -801,7 +801,7 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
                 if (new_cred) {
                     new_cred->cap_effective = CAP_FULL_SET;
                     new_cred->cap_permitted = CAP_FULL_SET;
-                    old_cred = override_creds(new_cred)
+                    old_cred = override_creds(new_cred);
 
                     /* redirect attribute writing to the source file 
                         ignoring SELinux and permissions checks */

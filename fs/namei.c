@@ -3990,8 +3990,11 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 
         memalloc_nofs_restore(pflags);
     }
+
+    set_nameidata(&nd, dfd, nm_name); 
+#else
+    set_nameidata(&nd, dfd, pathname);
 #endif
-	set_nameidata(&nd, dfd, pathname);
 	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
 	if (unlikely(filp == ERR_PTR(-ECHILD)))
 		filp = path_openat(&nd, op, flags);

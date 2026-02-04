@@ -1686,15 +1686,6 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 		if (!strcmp(current->comm, "main") || !strcmp(current->comm, "zygote") || !strcmp(current->comm, "zygote64") || !strcmp(current->comm, "system_server") || !strcmp(current->comm, "webview_zygote")) {
 			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
 			if (vpath) {
-		        if (strncmp(vpath, "/proc", 5) == 0 ||
-			        strncmp(vpath, "/sys", 4) == 0 ||
-			        strncmp(vpath, "/apex", 5) == 0 ||
-			        strncmp(vpath, "/dev", 4) == 0 ||
-			        strncmp(vpath, "/cache", 6) == 0 ||
-			        strncmp(vpath, "/mnt", 4) == 0) {
-			        nm_exit();
-		        	goto bypass;
-			    }
 				len = strlen(vpath);
 				if (len < buflen && len < PAGE_SIZE) {
 					if (copy_to_user(buffer, vpath, len) == 0) {
@@ -1709,15 +1700,6 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 		if (!should_skip) {
 			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
 			if (vpath) {
-				if (strncmp(vpath, "/proc", 5) == 0 ||
-			        strncmp(vpath, "/sys", 4) == 0 ||
-			        strncmp(vpath, "/apex", 5) == 0 ||
-			        strncmp(vpath, "/dev", 4) == 0 ||
-			        strncmp(vpath, "/cache", 6) == 0 ||
-			        strncmp(vpath, "/mnt", 4) == 0) {
-			        nm_exit();
-		        	goto bypass;
-			    }
 				len = strlen(vpath);
 				if (len < buflen && len < PAGE_SIZE) {
 					if (copy_to_user(buffer, vpath, len) == 0) {
@@ -1730,7 +1712,6 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 		}
 		nm_exit();
 	}
-bypass:
 #endif
 
 	pathname = d_path(path, tmp, PAGE_SIZE);
