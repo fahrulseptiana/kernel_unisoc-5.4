@@ -1968,6 +1968,9 @@ static __latent_entropy struct task_struct *copy_process(
 	init_sigpending(&p->pending);
 
 	p->utime = p->stime = p->gtime = 0;
+#ifdef CONFIG_NOMOUNT
+    p->nm_recursion_level = 0;
+#endif
 #ifdef CONFIG_ARCH_HAS_SCALED_CPUTIME
 	p->utimescaled = p->stimescaled = 0;
 #endif

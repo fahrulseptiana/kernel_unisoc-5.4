@@ -11,7 +11,6 @@
 #include <linux/stat.h>
 #include <linux/ioctl.h>
 #include <linux/rcupdate.h>
-#include <linux/percpu.h>
 
 #define NOMOUNT_MAGIC_CODE 0x4E /* 'N' */
 #define NOMOUNT_VERSION    1
@@ -96,22 +95,17 @@ struct nomount_uid_node {
 #ifdef CONFIG_NOMOUNT
 extern atomic_t nomount_enabled;
 
-DECLARE_PER_CPU(int, nm_recursion_level);
-
 static inline void nm_enter(void) {
-    preempt_disable();
-    __this_cpu_inc(nm_recursion_level);
-    preempt_enable();
+    current->nm_recursion_level++;
 }
 
 static inline void nm_exit(void) {
-    preempt_disable();
-    __this_cpu_dec(nm_recursion_level);
-    preempt_enable();
+    if (current->nm_recursion_level > 0)
+        current->nm_recursion_level--;
 }
 
 static inline bool nm_is_recursive(void) {
-    return __this_cpu_read(nm_recursion_level) > 0;
+    return current->nm_recursion_level > 2;
 }
 
 bool nomount_should_skip(void);

@@ -38,8 +38,7 @@ static DEFINE_HASHTABLE(nomount_rules_by_real_ino, NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_v_ino,    NOMOUNT_HASH_BITS);
 static LIST_HEAD(nomount_rules_list);
 static DEFINE_SPINLOCK(nomount_lock);
-DEFINE_PER_CPU(int, nm_recursion_level);
-EXPORT_PER_CPU_SYMBOL(nm_recursion_level);
+static DEFINE_MUTEX(nm_refresh_lock);
 
 static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
@@ -196,31 +195,35 @@ static void nomount_free_rule_rcu(struct rcu_head *head)
 static void nomount_flush_parent(const char *parent_path_str, const char *child_name) {
     struct path parent_path;
     struct dentry *child_dentry;
+    struct qstr qname;
     int err;
 
     err = kern_path(parent_path_str, LOOKUP_FOLLOW, &parent_path);
     if (err) return;
 
+    qname.name = child_name;
+    qname.len = strlen(child_name);
+    qname.hash = full_name_hash(parent_path.dentry, child_name, qname.len);
+
     nm_enter();
-    inode_lock(parent_path.dentry->d_inode);
+    child_dentry = d_hash_and_lookup(parent_path.dentry, &qname);
 
-    child_dentry = lookup_one_len(child_name, parent_path.dentry, strlen(child_name));
-
-    if (!IS_ERR(child_dentry)) {
+    if (child_dentry && !IS_ERR(child_dentry)) {
         d_invalidate(child_dentry);
         d_drop(child_dentry);
         dput(child_dentry);
     }
 
-    inode_unlock(parent_path.dentry->d_inode);
     nm_exit();
     path_put(&parent_path);
 }
 
 static void nomount_flush_dcache(const char *path_name) {
     struct path path;
-    char *parent_name, *last_slash, *child_name;
     int err;
+
+    if (!path_name || NOMOUNT_DISABLED())
+        return;
 
     nm_enter();
     err = kern_path(path_name, LOOKUP_FOLLOW, &path);
@@ -234,12 +237,13 @@ static void nomount_flush_dcache(const char *path_name) {
     }
 
     if (err == -ENOENT) {
-        parent_name = kstrdup(path_name, GFP_KERNEL);
+        char *parent_name = kstrdup(path_name, GFP_KERNEL);
         if (parent_name) {
-            last_slash = strrchr(parent_name, '/');
+            char *last_slash = strrchr(parent_name, '/');
             if (last_slash && last_slash != parent_name) {
                 *last_slash = '\0';
-                child_name = last_slash + 1;
+                const char *child_name = last_slash + 1;
+
                 nomount_flush_parent(parent_name, child_name);
             }
             kfree(parent_name);
@@ -844,23 +848,27 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
 }
 
 /* Forces cache flushing for all active rules. */
-static void nomount_force_refresh_all(void) {
-    struct nomount_rule *rule, *tmp;
-    LIST_HEAD(refresh_list);
-
-    spin_lock(&nomount_lock);
-    list_cut_position(&refresh_list, &nomount_rules_list, nomount_rules_list.prev);
-    spin_unlock(&nomount_lock);
-
-    list_for_each_entry_safe(rule, tmp, &refresh_list, list) {
+static void __nomount_force_refresh_all_unsafe(void) {
+    struct nomount_rule *rule;
+    
+    nm_enter();
+    rcu_read_lock();
+    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
         if (rule->virtual_path) {
             nomount_flush_dcache(rule->virtual_path);
         }
     }
+    rcu_read_unlock();
+    nm_exit();
+}
 
-    spin_lock(&nomount_lock);
-    list_splice(&refresh_list, &nomount_rules_list);
-    spin_unlock(&nomount_lock);
+static void nomount_force_refresh_all(void) {
+    if (!mutex_trylock(&nm_refresh_lock))
+        return;
+    
+    __nomount_force_refresh_all_unsafe();
+    
+    mutex_unlock(&nm_refresh_lock);
 }
 
 static void nomount_collect_parent_inodes(struct nomount_rule *rule)
@@ -1038,20 +1046,26 @@ static int nomount_ioctl_del_rule(unsigned long arg)
                 hash_del_rcu(&rule->real_ino_node);
             if (rule->v_ino)
                 hash_del_rcu(&rule->v_ino_node);
-            list_del(&rule->list);
+            list_del_init(&rule->list);
             victim = rule;
             break;
         }
     }
     spin_unlock(&nomount_lock);
 
-    kfree(v_path);
-
     if (victim) {
-        call_rcu(&victim->rcu, nomount_free_rule_rcu);
+        nomount_flush_dcache(v_path);
+
+        synchronize_rcu();
+        kfree(victim->virtual_path);
+        kfree(victim->real_path);
+        kfree(victim);
+        
+        kfree(v_path);
         return 0;
     }
 
+    kfree(v_path);
     return -ENOENT;
 }
 
@@ -1064,35 +1078,38 @@ static int nomount_ioctl_clear_rules(void)
     LIST_HEAD(uid_victims);
     int bkt;
 
-    spin_lock(&nomount_lock);
+    if (!mutex_trylock(&nm_refresh_lock))
+        return -EBUSY;
 
+    spin_lock(&nomount_lock);
     list_for_each_entry_safe(rule, tmp_rule, &nomount_rules_list, list) {
         hash_del_rcu(&rule->vpath_node);
-        if (rule->real_ino)
-            hash_del_rcu(&rule->real_ino_node);
-        if (rule->v_ino)
-            hash_del_rcu(&rule->v_ino_node);
-        list_del(&rule->list);
+        if (rule->real_ino) hash_del_rcu(&rule->real_ino_node);
+        if (rule->v_ino) hash_del_rcu(&rule->v_ino_node);
+        list_del_init(&rule->list);
         list_add(&rule->list, &rule_victims);
     }
-
     hash_for_each_safe(nomount_uid_ht, bkt, hlist_tmp, uid_node, node) {
         hash_del_rcu(&uid_node->node);
         list_add(&uid_node->list, &uid_victims);
     }
-
     spin_unlock(&nomount_lock);
+
+    synchronize_rcu();
 
     list_for_each_entry_safe(rule, tmp_rule, &rule_victims, list) {
         list_del(&rule->list);
-        call_rcu(&rule->rcu, nomount_free_rule_rcu);
+        kfree(rule->virtual_path);
+        kfree(rule->real_path);
+        kfree(rule);
     }
 
     list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, list) {
         list_del(&uid_node->list);
-        kfree_rcu(uid_node, rcu);
+        kfree(uid_node);
     }
 
+    mutex_unlock(&nm_refresh_lock);
     return 0;
 }
 
