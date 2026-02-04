@@ -734,6 +734,8 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
 {
     struct nomount_rule *rule;
     struct path real_path;
+    const struct cred *old_cred;
+    struct cred *new_cred;
     ssize_t ret;
 
     if (nomount_should_skip() || !dentry || !dentry->d_inode)
@@ -748,8 +750,21 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
             // if it's an injected file, we redirect the request to the REAL file.
             nm_enter();
             if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
-                // we use vfs_getxattr from the actual (source) file
-                ret = vfs_getxattr(real_path.dentry, name, value, size);
+                new_cred = prepare_creds();
+                if (new_cred) {
+                    new_cred->cap_effective = CAP_FULL_SET;
+                    new_cred->cap_permitted = CAP_FULL_SET;
+                    old_cred = override_creds(new_cred);
+                    /* we use __vfs_getxattr from the actual (source) file
+                        to skip SELinux and permissions checks */
+                    ret = __vfs_getxattr(real_path.dentry, real_path.dentry->d_inode, name, value, size);
+
+                    revert_creds(old_cred);
+                    put_cred(new_cred);
+                } else {
+                    ret = -ENOMEM;
+                }
+
                 path_put(&real_path);
                 nm_exit();
                 return ret;
@@ -768,6 +783,8 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
 {
     struct nomount_rule *rule;
     struct path real_path;
+    const struct cred *old_cred;
+    struct cred *new_cred;
     int ret;
 
     if (nomount_should_skip() || !dentry || !dentry->d_inode)
@@ -780,8 +797,21 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
 
             nm_enter();
             if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
-                // redirect attribute writing to the source file
-                ret = vfs_setxattr(real_path.dentry, name, value, size, flags);
+                new_cred = prepare_creds();
+                if (new_cred) {
+                    new_cred->cap_effective = CAP_FULL_SET;
+                    new_cred->cap_permitted = CAP_FULL_SET;
+                    old_cred = override_creds(new_cred)
+
+                    /* redirect attribute writing to the source file 
+                        ignoring SELinux and permissions checks */
+                    ret = __vfs_setxattr_noperm(real_path.dentry, name, value, size, flags);
+
+                    revert_creds(old_cred);
+                    put_cred(new_cred);
+                } else {
+                    ret = -ENOMEM;
+                }
                 path_put(&real_path);
                 nm_exit();
                 return ret;
