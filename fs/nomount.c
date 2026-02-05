@@ -543,11 +543,18 @@ void nomount_inject_dents64(struct file *file, void __user **dirent, int *count,
     dir_ino = d_backing_inode(parent)->i_ino;
 
     if (*pos >= NOMOUNT_MAGIC_POS) {
-        v_index = *pos - NOMOUNT_MAGIC_POS;
+        unsigned long long diff = (unsigned long long)*pos - NOMOUNT_MAGIC_POS;
+        if (diff > 0x7FFFFFFF) {
+            v_index = 0;
+            *pos = NOMOUNT_MAGIC_POS;
+        } else {
+            v_index = (unsigned long)diff;
+        }
     } else {
         v_index = 0;
         *pos = NOMOUNT_MAGIC_POS;
     }
+
     nm_enter();
     while (1) {
         child_fake_ino = 0;
@@ -608,7 +615,13 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     dir_ino = d_backing_inode(parent)->i_ino;
 
     if (*pos >= NOMOUNT_MAGIC_POS) {
-        v_index = *pos - NOMOUNT_MAGIC_POS;
+        unsigned long long diff = (unsigned long long)*pos - NOMOUNT_MAGIC_POS;
+        if (diff > 0x7FFFFFFF) {
+            v_index = 0;
+            *pos = NOMOUNT_MAGIC_POS;
+        } else {
+            v_index = (unsigned long)diff;
+        }
     } else {
         v_index = 0;
         *pos = NOMOUNT_MAGIC_POS;
@@ -677,6 +690,31 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
     *last_slash = '\0';
     parent_path = path_copy;
     name = last_slash + 1;
+
+    /* Try to get the REAL parent inode first */
+    parent_ino = 0;
+    {
+        struct nomount_rule *rule;
+        u32 parent_hash = full_name_hash(NULL, parent_path, strlen(parent_path));
+
+        rcu_read_lock();
+        hash_for_each_possible_rcu(nomount_rules_by_vpath, rule, vpath_node, parent_hash) {
+            if (strcmp(parent_path, rule->virtual_path) == 0) {
+                /* Parent is also a redirect - use real path's inode */
+                rcu_read_unlock();
+                nm_enter();
+                if (kern_path(rule->real_path, LOOKUP_FOLLOW, &path) == 0) {
+                    parent_ino = path.dentry->d_inode->i_ino;
+                    path_put(&path);
+                }
+                nm_exit();
+                goto found_parent_ino;
+            }
+        }
+        rcu_read_unlock();
+    }
+
+    /* Fallback: use virtual path's inode */
     nm_enter();
     if (kern_path(parent_path, LOOKUP_FOLLOW, &path) == 0) {
         parent_ino = path.dentry->d_inode->i_ino;
@@ -685,6 +723,7 @@ static void nomount_auto_inject_parent(const char *v_path, unsigned char type)
         parent_ino = (unsigned long)full_name_hash(NULL, parent_path, strlen(parent_path));
     }
 
+found_parent_ino:
     spin_lock(&nomount_lock);
     hash_for_each_possible(nomount_dirs_ht, curr, node, parent_ino) {
         if (curr->dir_ino == parent_ino) {
