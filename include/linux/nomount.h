@@ -47,6 +47,7 @@ struct nomount_rule {
     struct hlist_node v_ino_node;
 
     struct list_head list;
+    struct list_head cleanup_list;
     size_t vp_len;
     char *virtual_path;
     char *real_path;
@@ -71,6 +72,7 @@ struct nomount_dir_node {
     struct hlist_node node;      
     char *dir_path;              
     unsigned long dir_ino;
+    struct list_head cleanup_list;
     struct list_head children_names; 
     unsigned long next_child_index; /* next v_index to assign */
     struct rcu_head rcu;
@@ -89,6 +91,7 @@ struct nomount_uid_node {
     uid_t uid;
     struct hlist_node node;
     struct list_head list;
+    struct list_head cleanup_list;
     struct rcu_head rcu;
 };
 

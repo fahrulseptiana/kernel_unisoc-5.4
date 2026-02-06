@@ -707,6 +707,7 @@ found_parent_ino:
     if (!dir_node) {
         dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
         if (dir_node) {
+            INIT_LIST_HEAD(&dir_node->cleanup_list);
             dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
             dir_node->dir_ino = parent_ino;
             INIT_LIST_HEAD(&dir_node->children_names);
@@ -1072,6 +1073,9 @@ static int nomount_ioctl_del_rule(unsigned long arg)
     if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
         return -EFAULT;
 
+    if (!capable(CAP_SYS_ADMIN))
+        return -EPERM;
+
     v_path = strndup_user(data.virtual_path, PATH_MAX);
     if (IS_ERR(v_path))
         return PTR_ERR(v_path);
@@ -1082,12 +1086,13 @@ static int nomount_ioctl_del_rule(unsigned long arg)
     hash_for_each_possible_safe(nomount_rules_by_vpath,
                                 rule, tmp, vpath_node, hash) {
         if (strcmp(rule->virtual_path, v_path) == 0) {
+            rule->flags &= ~NM_FLAG_ACTIVE;
             hash_del_rcu(&rule->vpath_node);
             if (rule->real_ino)
                 hash_del_rcu(&rule->real_ino_node);
             if (rule->v_ino)
                 hash_del_rcu(&rule->v_ino_node);
-            list_del_init(&rule->list);
+            list_del_rcu(&rule->list);
             victim = rule;
             break;
         }
@@ -1114,42 +1119,77 @@ static int nomount_ioctl_clear_rules(void)
 {
     struct nomount_rule *rule, *tmp_rule;
     struct nomount_uid_node *uid_node, *tmp_uid;
+    struct nomount_dir_node *dir_node, *tmp_dir;
+    struct nomount_child_name *child, *tmp_child;
     struct hlist_node *hlist_tmp;
     LIST_HEAD(rule_victims);
     LIST_HEAD(uid_victims);
+    LIST_HEAD(dir_victims);
     int bkt;
-
+    
+    if (!capable(CAP_SYS_ADMIN))
+        return -EPERM;
+    
     if (!mutex_trylock(&nm_refresh_lock))
         return -EBUSY;
 
     spin_lock(&nomount_lock);
     list_for_each_entry_safe(rule, tmp_rule, &nomount_rules_list, list) {
         hash_del_rcu(&rule->vpath_node);
-        if (rule->real_ino) hash_del_rcu(&rule->real_ino_node);
-        if (rule->v_ino) hash_del_rcu(&rule->v_ino_node);
-        list_del_init(&rule->list);
-        list_add(&rule->list, &rule_victims);
+        if (rule->real_ino)
+            hash_del_rcu(&rule->real_ino_node);
+        if (rule->v_ino)
+            hash_del_rcu(&rule->v_ino_node);
+
+        list_del_rcu(&rule->list);
+        list_add_tail(&rule->cleanup_list, &rule_victims);
+        rule->flags &= ~NM_FLAG_ACTIVE;
     }
+
     hash_for_each_safe(nomount_uid_ht, bkt, hlist_tmp, uid_node, node) {
         hash_del_rcu(&uid_node->node);
-        list_add(&uid_node->list, &uid_victims);
+        list_add_tail(&uid_node->cleanup_list, &uid_victims);
     }
+
+    hash_for_each_safe(nomount_dirs_ht, bkt, hlist_tmp, dir_node, node) {
+        hash_del_rcu(&dir_node->node);
+        list_add_tail(&dir_node->cleanup_list, &dir_victims);
+    }
+    
     spin_unlock(&nomount_lock);
 
     synchronize_rcu();
 
-    list_for_each_entry_safe(rule, tmp_rule, &rule_victims, list) {
-        list_del(&rule->list);
+    list_for_each_entry_safe(dir_node, tmp_dir, &dir_victims, cleanup_list) {
+        list_del(&dir_node->cleanup_list);
+
+        list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
+            list_del(&child->list);
+            kfree(child->name);
+            kfree(child);
+        }
+        
+        kfree(dir_node->dir_path);
+        kfree(dir_node);
+    }
+
+    list_for_each_entry_safe(rule, tmp_rule, &rule_victims, cleanup_list) {
+        list_del(&rule->cleanup_list);
+
+        if (rule->virtual_path) {
+            nomount_flush_dcache(rule->virtual_path);
+        }
+        
         kfree(rule->virtual_path);
         kfree(rule->real_path);
         kfree(rule);
     }
 
-    list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, list) {
-        list_del(&uid_node->list);
+    list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, cleanup_list) {
+        list_del(&uid_node->cleanup_list);
         kfree(uid_node);
     }
-
+    
     mutex_unlock(&nm_refresh_lock);
     return 0;
 }
