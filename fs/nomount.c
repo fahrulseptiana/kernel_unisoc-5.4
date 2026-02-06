@@ -16,7 +16,6 @@
 #include <linux/sched/mm.h>
 #include <linux/statfs.h>
 #include <linux/workqueue.h>
-#include <linux/seq_file.h>
 #include <linux/xattr.h>
 #include <linux/nomount.h> 
 
@@ -42,33 +41,6 @@ static DEFINE_MUTEX(nm_refresh_lock);
 
 static unsigned long nm_ino_adb = 0;
 static unsigned long nm_ino_modules = 0;
-
-/* seq_file logic */
-static void *nm_seq_start(struct seq_file *s, loff_t *pos) {
-    spin_lock(&nomount_lock);
-    return seq_list_start(&nomount_rules_list, *pos);
-}
-
-static void *nm_seq_next(struct seq_file *s, void *v, loff_t *pos) {
-    return seq_list_next(v, &nomount_rules_list, pos);
-}
-
-static void nm_seq_stop(struct seq_file *s, void *v) {
-    spin_unlock(&nomount_lock);
-}
-
-static int nm_seq_show(struct seq_file *s, void *v) {
-    struct nomount_rule *rule = list_entry(v, struct nomount_rule, list);
-    seq_printf(s, "%s->%s\n", rule->virtual_path, rule->real_path);
-    return 0;
-}
-
-static const struct seq_operations nm_seq_ops = {
-    .start = nm_seq_start,
-    .next  = nm_seq_next,
-    .stop  = nm_seq_stop,
-    .show  = nm_seq_show,
-};
 
 /* Critical processes that NoMount should ignore to avoid instability */
 static const char *critical_processes[] = {
