@@ -100,18 +100,34 @@ struct nomount_uid_node {
 #ifdef CONFIG_NOMOUNT
 extern atomic_t nomount_enabled;
 
-DECLARE_PER_CPU(local_t, nm_recursion_level);
+struct nm_recursion_slot {
+    pid_t pid;
+    int level;
+};
+
+static DEFINE_PER_CPU(struct nm_recursion_slot, nm_recursion_table);
 
 static inline void nm_enter(void) {
-    local_inc(this_cpu_ptr(&nm_recursion_level));
+    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
+    pid_t nr = current->pid;
+
+    if (slot->pid != nr) {
+        slot->pid = nr;
+        slot->level = 1;
+    } else {
+        slot->level++;
+    }
 }
 
 static inline void nm_exit(void) {
-    local_dec(this_cpu_ptr(&nm_recursion_level));
+    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
+    if (slot->level > 0)
+        slot->level--;
 }
 
 static inline bool nm_is_recursive(void) {
-    return local_read(this_cpu_ptr(&nm_recursion_level)) > 2;
+    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
+    return (slot->pid == current->pid && slot->level > 2);
 }
 
 bool nomount_should_skip(void);

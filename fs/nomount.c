@@ -37,8 +37,6 @@ static DEFINE_HASHTABLE(nomount_rules_by_real_ino, NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_v_ino,    NOMOUNT_HASH_BITS);
 static LIST_HEAD(nomount_rules_list);
 static DEFINE_SPINLOCK(nomount_lock);
-DEFINE_PER_CPU(local_t, nm_recursion_level);
-EXPORT_PER_CPU_SYMBOL(nm_recursion_level);
 static DEFINE_MUTEX(nm_refresh_lock);
 
 static unsigned long nm_ino_adb = 0;
