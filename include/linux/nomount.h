@@ -12,6 +12,8 @@
 #include <linux/ioctl.h>
 #include <linux/rcupdate.h>
 
+#include <asm/local.h>
+
 #define NOMOUNT_MAGIC_CODE 0x4E /* 'N' */
 #define NOMOUNT_VERSION    1
 #define NOMOUNT_HASH_BITS  12
@@ -98,17 +100,18 @@ struct nomount_uid_node {
 #ifdef CONFIG_NOMOUNT
 extern atomic_t nomount_enabled;
 
+DECLARE_PER_CPU(local_t, nm_recursion_level);
+
 static inline void nm_enter(void) {
-    current->nm_recursion_level++;
+    local_inc(this_cpu_ptr(&nm_recursion_level));
 }
 
 static inline void nm_exit(void) {
-    if (current->nm_recursion_level > 0)
-        current->nm_recursion_level--;
+    local_dec(this_cpu_ptr(&nm_recursion_level));
 }
 
 static inline bool nm_is_recursive(void) {
-    return current->nm_recursion_level > 2;
+    return local_read(this_cpu_ptr(&nm_recursion_level)) > 2;
 }
 
 bool nomount_should_skip(void);
