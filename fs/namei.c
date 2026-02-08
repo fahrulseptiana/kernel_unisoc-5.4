@@ -369,7 +369,7 @@ int generic_permission(struct inode *inode, int mask)
     if (!nomount_should_skip()) {
 		nm_enter();
 		if (nomount_is_injected_file(inode) ||
-			(S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask))) {
+			nomount_is_traversal_allowed(inode, mask)) {
 			nm_exit();
 			return 0;
 		}
@@ -481,7 +481,7 @@ int inode_permission(struct inode *inode, int mask)
 	if (!nomount_should_skip()) {
 		nm_enter();
 		if (nomount_is_injected_file(inode) ||
-			(S_ISDIR(inode->i_mode) && nomount_is_traversal_allowed(inode, mask))) {
+			nomount_is_traversal_allowed(inode, mask)) {
 			nm_exit();
 			return 0;
 		}

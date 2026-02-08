@@ -1673,46 +1673,15 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 	int len;
 
 #ifdef CONFIG_NOMOUNT
-	const char *vpath = NULL;
-	bool should_skip;
+    if (!nomount_should_skip() && path->dentry) {
+        ssize_t nm_ret = nomount_readlink_hook(d_backing_inode(path->dentry), buffer, buflen);
+        if (nm_ret > 0)
+            return nm_ret;
+    }
 #endif
 
 	if (!tmp)
 		return -ENOMEM;
-
-#ifdef CONFIG_NOMOUNT
-	if (path->dentry && d_backing_inode(path->dentry)) {
-		nm_enter();
-		if (!strcmp(current->comm, "main") || !strcmp(current->comm, "zygote") || !strcmp(current->comm, "zygote64") || !strcmp(current->comm, "system_server") || !strcmp(current->comm, "webview_zygote")) {
-			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
-			if (vpath) {
-				len = strlen(vpath);
-				if (len < buflen && len < PAGE_SIZE) {
-					if (copy_to_user(buffer, vpath, len) == 0) {
-						nm_exit();
-						free_page((unsigned long)tmp);
-						return len;
-					}
-				}
-			}
-		}
-		should_skip = nomount_should_skip_readlink();
-		if (!should_skip) {
-			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
-			if (vpath) {
-				len = strlen(vpath);
-				if (len < buflen && len < PAGE_SIZE) {
-					if (copy_to_user(buffer, vpath, len) == 0) {
-						nm_exit();
-						free_page((unsigned long)tmp);
-						return len;
-					}
-				}
-			}
-		}
-		nm_exit();
-	}
-#endif
 
 	pathname = d_path(path, tmp, PAGE_SIZE);
 	len = PTR_ERR(pathname);

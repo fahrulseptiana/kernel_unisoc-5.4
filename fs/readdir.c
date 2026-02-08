@@ -375,6 +375,7 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	int error;
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
+	int compat = 0;
 #endif
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
@@ -428,7 +429,7 @@ skip_real_iterate:
 	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nm_enter();
-		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
+		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos, compat);
 		error = initial_count - buf.count;
 		nm_exit();
 	}
@@ -541,6 +542,7 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 	int error;
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
+	int compat = 0;
 #endif
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
@@ -594,7 +596,7 @@ skip_real_iterate:
 	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nm_enter();
-		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
+		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos, compat);
 		error = initial_count - buf.count;
 		nm_exit();
 	}
@@ -850,6 +852,7 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	int error;
 #ifdef CONFIG_NOMOUNT
 	int initial_count = count;
+	int compat = 1;
 #endif
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
@@ -902,7 +905,7 @@ skip_real_iterate:
 	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
         f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
 		nm_enter();
-		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
+		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos, compat);
 		error = initial_count - buf.count;
 		nm_exit();
 	}
