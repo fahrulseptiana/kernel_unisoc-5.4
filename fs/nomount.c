@@ -77,17 +77,9 @@ static void nomount_bloom_rebuild(void)
     }
 }
 
-bool nomount_should_skip(void) {
-    if (NOMOUNT_DISABLED()) return true;
-    if (nm_is_recursive()) return true;
-    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
-    if (current->flags & (PF_KTHREAD | PF_EXITING)) return true;
-
-    return false;
-}
-EXPORT_SYMBOL(nomount_should_skip);
-
-static bool nomount_is_uid_blocked(uid_t uid) {
+/* comprobations */
+/* check if current uid is blocked */
+bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
     if (hash_empty(nomount_uid_ht) || nomount_should_skip()) return false;
     
@@ -102,6 +94,73 @@ static bool nomount_is_uid_blocked(uid_t uid) {
     return false;
 }
 
+/* check when nomount should skip the hooks */
+bool nomount_should_skip(void) {
+    if (NOMOUNT_DISABLED()) return true;
+    if (nm_is_recursive()) return true;
+    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
+    if (current->flags & (PF_KTHREAD | PF_EXITING)) return true;
+    if (nomount_is_uid_blocked(current_uid().val)) return true;
+
+    return false;
+}
+EXPORT_SYMBOL(nomount_should_skip);
+
+/* checks if inode corresponds to a file injected by nomount */
+bool nomount_is_injected_file(struct inode *inode) {
+    struct nomount_rule *rule;
+    bool found = false;
+
+    if (!inode || NOMOUNT_DISABLED()) return false;
+
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, inode->i_ino) {
+        if (rule->real_ino == inode->i_ino) {
+            found = true;
+            break;
+        }
+    }
+
+    hash_for_each_possible_rcu(nomount_rules_by_v_ino, rule, v_ino_node, inode->i_ino) {
+        if (rule->v_ino == inode->i_ino) {
+            found = true;
+            break;
+        }
+    }
+
+    rcu_read_unlock();
+    return found;
+}
+
+/* checks if the path corresponds to a nomount file path */
+bool nomount_is_traversal_allowed(struct inode *inode, int mask)
+{
+    struct nomount_dir_node *dir;
+    unsigned long ino;
+
+    if (!inode || NOMOUNT_DISABLED())
+        return false;
+
+    ino = inode->i_ino;
+    if (nomount_is_injected_file(inode)) return true;
+
+    rcu_read_lock();
+
+    hash_for_each_possible_rcu(nomount_dirs_ht, dir, node, ino) {
+        if (dir->dir_ino == ino) {
+            rcu_read_unlock();
+            return true;
+        }
+    }
+
+    rcu_read_unlock();
+    return false;
+}
+EXPORT_SYMBOL(nomount_is_traversal_allowed);
+
+/* helpers */
+
+/* returns the virtual path of a nomount file if the inode matches that file */
 const char *nomount_get_static_vpath(struct inode *inode) {
     struct nomount_rule *rule;
     unsigned long ino;
@@ -132,111 +191,63 @@ const char *nomount_get_static_vpath(struct inode *inode) {
 }
 EXPORT_SYMBOL(nomount_get_static_vpath);
 
-ssize_t nomount_readlink_hook(struct inode *inode, char __user *buffer, int buflen)
+/* recursively register inodes of the parent directories in the directory hash table */
+static void nomount_collect_parents(const char *real_path)
 {
-    const char *vpath;
-    size_t len;
+    char *path_tmp, *p;
+    struct path kp;
+    struct nomount_dir_node *dir_node;
 
-    if (!inode || NOMOUNT_DISABLED())
-        return 0;
+    if (!real_path) return;
 
-    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return 0;
+    path_tmp = kstrdup(real_path, GFP_KERNEL);
+    if (!path_tmp) return;
 
-    nm_enter();
-    vpath = nomount_get_static_vpath(inode);
-    if (vpath) {
-        len = strlen(vpath);
-        if (len > buflen)
-            len = buflen;
-        
-        if (copy_to_user(buffer, vpath, len) == 0) {
+    p = path_tmp;
+    while (1) {
+        char *slash = strrchr(p, '/');
+        if (!slash || slash == p)
+            break;
+
+        *slash = '\0';
+
+        nm_enter();
+        if (kern_path(p, LOOKUP_FOLLOW, &kp) == 0) {
+            struct nomount_dir_node *curr;
+            bool exists;
+
+            unsigned long p_ino = d_backing_inode(kp.dentry)->i_ino;
+            path_put(&kp);
             nm_exit();
-            return len;
+
+            spin_lock(&nomount_lock);
+            exists = false;
+            hash_for_each_possible(nomount_dirs_ht, curr, node, p_ino) {
+                if (curr->dir_ino == p_ino) {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists) {
+                dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
+                if (dir_node) {
+                    dir_node->dir_ino = p_ino;
+                    INIT_LIST_HEAD(&dir_node->children_names);
+                    hash_add_rcu(nomount_dirs_ht, &dir_node->node, p_ino);
+                }
+            }
+            spin_unlock(&nomount_lock);
+        } else {
+            nm_exit();
         }
     }
-    nm_exit();
-
-    return 0;
-}
-EXPORT_SYMBOL(nomount_readlink_hook);
-
-bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino)
-{
-    struct nomount_rule *rule;
-    bool found = false;
-    unsigned long target_ino = inode->i_ino;
-
-    if (unlikely(!inode || !dev || !ino || nomount_should_skip()))
-        return false;
-
-    if (!test_bit(target_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return false;
-
-    rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, target_ino) {
-        if (rule->real_ino == target_ino) {
-            *dev = READ_ONCE(rule->v_dev);
-            *ino = READ_ONCE(rule->v_ino);
-            found = true;
-            break;
-        }
-    }
-    rcu_read_unlock();
-
-    return found;
-}
-EXPORT_SYMBOL(nomount_spoof_mmap_metadata);
-
-bool nomount_is_traversal_allowed(struct inode *inode, int mask)
-{
-    struct nomount_dir_node *dir;
-    unsigned long ino;
-
-    if (!inode || NOMOUNT_DISABLED())
-        return false;
-
-    ino = inode->i_ino;
-    if (nomount_is_injected_file(inode)) return true;
-
-    rcu_read_lock();
-
-    hash_for_each_possible_rcu(nomount_dirs_ht, dir, node, ino) {
-        if (dir->dir_ino == ino) {
-            rcu_read_unlock();
-            return true;
-        }
-    }
-
-    rcu_read_unlock();
-    return false;
-}
-EXPORT_SYMBOL(nomount_is_traversal_allowed);
-
-bool nomount_is_injected_file(struct inode *inode) {
-    struct nomount_rule *rule;
-    bool found = false;
-
-    if (!inode || NOMOUNT_DISABLED()) return false;
-    if (current->flags & PF_MEMALLOC_NOFS) return false;
-
-    rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, inode->i_ino) {
-        if (rule->real_ino == inode->i_ino) {
-            found = true;
-            break;
-        }
-    }
-
-    hash_for_each_possible_rcu(nomount_rules_by_v_ino, rule, v_ino_node, inode->i_ino) {
-        if (rule->v_ino == inode->i_ino) {
-            found = true;
-            break;
-        }
-    }
-
-    rcu_read_unlock();
-    return found;
+    kfree(path_tmp);
 }
 
+/* hooks */
+
+/* search if the pathname matches a nomount file, and return real path */
 char *nomount_resolve_path(const char *pathname) {
     struct nomount_rule *rule;
     u32 hash;
@@ -263,6 +274,7 @@ char *nomount_resolve_path(const char *pathname) {
 }
 EXPORT_SYMBOL(nomount_resolve_path);
 
+/* if the file matches a nomount file, returns the redirected file instead of the real one */
 struct filename *nomount_getname_hook(struct filename *name)
 {
     if (!nomount_bloom_test(name->name)) {
@@ -367,6 +379,7 @@ struct filename *nomount_getname_hook(struct filename *name)
     return name;
 }
 
+/* Injects fake directory entries into the userspace buffer during directory listing */
 void nomount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos, int compat)
 {
     struct nomount_dir_node *curr_dir;
@@ -440,6 +453,7 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     nm_exit();
 }
 
+/* registers a fake entry node in the parent directory node */
 static void nomount_auto_inject_parent(unsigned long parent_ino, const char *name, unsigned char type, const char *full_v_path)
 {
     struct nomount_dir_node *dir_node = NULL, *curr;
@@ -487,6 +501,7 @@ static void nomount_auto_inject_parent(unsigned long parent_ino, const char *nam
     spin_unlock(&nomount_lock);
 }
 
+/* retrieves extended attributes from the real file by temporarily elevating privileges */
 ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size)
 {
     struct nomount_rule *rule;
@@ -534,6 +549,7 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
 }
 EXPORT_SYMBOL(nomount_getxattr_hook);
 
+/* writes extended attributes directly to the real file using elevated capabilities */
 int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
 {
     struct nomount_rule *rule;
@@ -581,6 +597,38 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
 }
 EXPORT_SYMBOL(nomount_setxattr_hook);
 
+/* intercepts reading symbolic links to return virtual path instead of the real one */
+ssize_t nomount_readlink_hook(struct inode *inode, char __user *buffer, int buflen)
+{
+    const char *vpath;
+    size_t len;
+
+    if (!inode || NOMOUNT_DISABLED())
+        return 0;
+
+    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return 0;
+
+    nm_enter();
+    vpath = nomount_get_static_vpath(inode);
+    if (vpath) {
+        len = strlen(vpath);
+        if (len > buflen)
+            len = buflen;
+        
+        if (copy_to_user(buffer, vpath, len) == 0) {
+            nm_exit();
+            return len;
+        }
+    }
+    nm_exit();
+
+    return 0;
+}
+EXPORT_SYMBOL(nomount_readlink_hook);
+
+/* spoof functions */
+
+/* spoof inode and device id */
 void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 {
     struct nomount_rule *rule;
@@ -604,6 +652,7 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     rcu_read_unlock();
 }
 
+/* spoof filesystem type to match the virtual origin instead of real one */
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
 {
     struct nomount_rule *rule;
@@ -635,59 +684,34 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     rcu_read_unlock();
 }
 
-static void nomount_collect_parents(const char *real_path)
+/* Spoofs device and inode IDs for memory-mapped files */
+bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino)
 {
-    char *path_tmp, *p;
-    struct path kp;
-    struct nomount_dir_node *dir_node;
+    struct nomount_rule *rule;
+    bool found = false;
+    unsigned long target_ino = inode->i_ino;
 
-    if (!real_path) return;
+    if (unlikely(!inode || !dev || !ino || nomount_should_skip()))
+        return false;
 
-    path_tmp = kstrdup(real_path, GFP_KERNEL);
-    if (!path_tmp) return;
+    if (!test_bit(target_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return false;
 
-    p = path_tmp;
-    while (1) {
-        char *slash = strrchr(p, '/');
-        if (!slash || slash == p)
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, target_ino) {
+        if (rule->real_ino == target_ino) {
+            *dev = READ_ONCE(rule->v_dev);
+            *ino = READ_ONCE(rule->v_ino);
+            found = true;
             break;
-
-        *slash = '\0';
-
-        nm_enter();
-        if (kern_path(p, LOOKUP_FOLLOW, &kp) == 0) {
-            struct nomount_dir_node *curr;
-            bool exists;
-
-            unsigned long p_ino = d_backing_inode(kp.dentry)->i_ino;
-            path_put(&kp);
-            nm_exit();
-
-            spin_lock(&nomount_lock);
-            exists = false;
-            hash_for_each_possible(nomount_dirs_ht, curr, node, p_ino) {
-                if (curr->dir_ino == p_ino) {
-                    exists = true;
-                    break;
-                }
-            }
-
-            if (!exists) {
-                dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
-                if (dir_node) {
-                    dir_node->dir_ino = p_ino;
-                    INIT_LIST_HEAD(&dir_node->children_names);
-                    hash_add_rcu(nomount_dirs_ht, &dir_node->node, p_ino);
-                }
-            }
-            spin_unlock(&nomount_lock);
-        } else {
-            nm_exit();
         }
     }
-    kfree(path_tmp);
-}
+    rcu_read_unlock();
 
+    return found;
+}
+EXPORT_SYMBOL(nomount_spoof_mmap_metadata);
+
+/* ioctl */
 static int nomount_ioctl_add_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
