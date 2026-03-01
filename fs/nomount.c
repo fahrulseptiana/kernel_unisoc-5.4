@@ -245,6 +245,26 @@ static void nomount_collect_parents(const char *real_path)
     kfree(path_tmp);
 }
 
+/* checks if the filename has the specified extension */
+bool nm_has_extension(struct dentry *dentry, const char *ext)
+{
+    size_t name_len, ext_len;
+    const char *name;
+
+    if (!dentry || !ext)
+        return false;
+
+    name_len = dentry->d_name.len;
+    ext_len = strlen(ext);
+
+    if (name_len <= ext_len)
+        return false;
+
+    name = dentry->d_name.name;
+
+    return strncasecmp(name + name_len - ext_len, ext, ext_len) == 0;
+}
+
 /* hooks */
 
 /* search if the pathname matches a nomount file, and return real path */

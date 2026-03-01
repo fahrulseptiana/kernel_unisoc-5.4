@@ -430,8 +430,11 @@ retry:
     /* spoof writable attribute */
     if (!nomount_should_skip() && nomount_is_injected_file(inode)) {
         if (mode & MAY_WRITE) {
-            res = -EACCES; // non-writable
-            goto out_path_release;
+			if (nm_has_extension(path.dentry, ".apk") ||
+                nm_has_extension(path.dentry, ".jar")) {
+                res = -EACCES; // non-writable
+				goto out_path_release;
+            }
         }
     }
 #endif
