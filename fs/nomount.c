@@ -98,10 +98,13 @@ bool nomount_is_uid_blocked(uid_t uid) {
 /* check when nomount should skip the hooks */
 bool nomount_should_skip(void) {
     if (NOMOUNT_DISABLED()) return true;
-    if (nm_is_recursive()) return true;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
+    if (nm_is_recursive()) return true;
     if (current->flags & (PF_KTHREAD | PF_EXITING)) return true;
-    if (nomount_is_uid_blocked(current_uid().val)) return true;
+
+    if (unlikely(!hash_empty(nomount_uid_ht))) {
+        if (nomount_is_uid_blocked(current_uid().val)) return true;
+    }
 
     return false;
 }
