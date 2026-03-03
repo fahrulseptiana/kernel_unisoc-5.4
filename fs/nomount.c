@@ -40,6 +40,7 @@ static DEFINE_HASHTABLE(nomount_rules_by_v_ino,    NOMOUNT_HASH_BITS);
 static LIST_HEAD(nomount_rules_list);
 static DEFINE_SPINLOCK(nomount_lock);
 static DEFINE_MUTEX(nm_refresh_lock);
+extern struct cred init_cred;
 
 /* filter bloom logic */
 DECLARE_BITMAP(nomount_bloom, NOMOUNT_BLOOM_SIZE);
@@ -527,45 +528,36 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
     struct nomount_rule *rule;
     struct path r_path;
     const struct cred *old_cred;
-    struct cred *new_cred;
-    ssize_t ret;
+    ssize_t ret = -EOPNOTSUPP;
     unsigned long ino;
 
     if (nomount_should_skip() || !dentry || !dentry->d_inode)
-        return -EOPNOTSUPP;
+        return ret;
 
     ino = dentry->d_inode->i_ino;
-    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return -EOPNOTSUPP;
+    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) 
+        return ret;
 
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
         if (rule->real_ino == ino) {
-            char *r_path_str = rule->real_path; 
-            rcu_read_unlock();
-
             nm_enter();
-            if (kern_path(r_path_str, LOOKUP_FOLLOW, &r_path) == 0) {
-                new_cred = prepare_creds();
-                if (new_cred) {
-                    new_cred->cap_permitted = CAP_FULL_SET;
-                    old_cred = override_creds(new_cred);
-                    ret = __vfs_getxattr(r_path.dentry, r_path.dentry->d_inode, name, value, size, 0);
-
-                    revert_creds(old_cred);
-                    put_cred(new_cred);
-                } else {
-                    ret = -ENOMEM;
-                }
+            old_cred = override_creds(&init_cred);
+            
+            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &r_path) == 0) {
+                ret = __vfs_getxattr(r_path.dentry, r_path.dentry->d_inode, name, value, size, 0);
                 path_put(&r_path);
-                nm_exit();
-                return ret;
+            } else {
+                ret = -ENOENT;
             }
+
+            revert_creds(old_cred);
             nm_exit();
-            return -ENOENT;
+            break;
         }
     }
     rcu_read_unlock();
-    return -EOPNOTSUPP;
+    return ret;
 }
 EXPORT_SYMBOL(nomount_getxattr_hook);
 
@@ -575,45 +567,37 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
     struct nomount_rule *rule;
     struct path r_path;
     const struct cred *old_cred;
-    struct cred *new_cred;
-    int ret;
+    int ret = -EOPNOTSUPP;
     unsigned long ino;
 
     if (nomount_should_skip() || !dentry || !dentry->d_inode)
-        return -EOPNOTSUPP;
+        return ret;
 
     ino = dentry->d_inode->i_ino;
-    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return -EOPNOTSUPP;
+    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) 
+        return ret;
 
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
         if (rule->real_ino == ino) {
-            char *r_path_str = rule->real_path;
-            rcu_read_unlock();
-
             nm_enter();
-            if (kern_path(r_path_str, LOOKUP_FOLLOW, &r_path) == 0) {
-                new_cred = prepare_creds();
-                if (new_cred) {
-                    new_cred->cap_effective = CAP_FULL_SET;
-                    old_cred = override_creds(new_cred);
-                    ret = __vfs_setxattr_noperm(r_path.dentry, name, value, size, flags);
-                    revert_creds(old_cred);
-                    put_cred(new_cred);
-                } else {
-                    ret = -ENOMEM;
-                }
+            old_cred = override_creds(&init_cred);
+            
+            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &r_path) == 0) {
+                ret = __vfs_setxattr_noperm(r_path.dentry, name, value, size, flags);
                 path_put(&r_path);
-                nm_exit();
-                return ret;
+            } else {
+                ret = -ENOENT;
             }
+            revert_creds(old_cred);
+            
             nm_exit();
-            return -ENOENT;
+            break; 
         }
     }
     rcu_read_unlock();
 
-    return -EOPNOTSUPP;
+    return ret;
 }
 EXPORT_SYMBOL(nomount_setxattr_hook);
 
