@@ -305,88 +305,44 @@ struct filename *nomount_getname_hook(struct filename *name)
         return name; 
     }
 
-    char *target = NULL;
+    char *target = NULL, *tmp_buf, *full_path;
     struct filename *new_name;
-    char path_buf[PATH_MAX];
+    size_t len;
 
     if (nomount_should_skip() || !name || !name->name)
         return name;
 
-    strlcpy(path_buf, name->name, PATH_MAX);
+    tmp_buf = __getname();
+    if (!tmp_buf) return name;
 
-    /* If relative path or contains "." / "..", normalize it */
-    if (path_buf[0] != '/' || strchr(path_buf, '.')) {
+    if (name->name[0] == '/') {
+        // Absolute path: we only use it directly
+        full_path = (char *)name->name;
+    } else {
+        // relative path, concatenate with CWD
         struct path pwd;
-        char *pwd_str;
+        get_fs_pwd(current->fs, &pwd);
+        
+        /* d_path / d_absolute_path resolve the actual path of the CWD */
+        full_path = d_absolute_path(&pwd, tmp_buf, PATH_MAX);
+        path_put(&pwd);
 
-        if (path_buf[0] != '/') {
-            /* Relative path: resolve against cwd */
-            get_fs_pwd(current->fs, &pwd);
-            pwd_str = d_path(&pwd, path_buf, PATH_MAX);
-            if (IS_ERR(pwd_str)) {
-                path_put(&pwd);
-                /* fallback: leave path_buf as-is */
-            } else {
-                size_t pwd_len = strlen(pwd_str);
-                if (pwd_len + 1 + strlen(name->name) < PATH_MAX) {
-                    memmove(path_buf + pwd_len + 1, name->name, strlen(name->name) + 1);
-                    if (pwd_str[pwd_len - 1] == '/')
-                        pwd_str[pwd_len - 1] = '\0';
-                    memmove(path_buf, pwd_str, pwd_len);
-                    path_buf[pwd_len] = '/';
-                }
-            }
-            path_put(&pwd);
+        if (IS_ERR(full_path)) {
+            __putname(tmp_buf);
+            return name;
         }
 
-        /* Normalize "." and ".." in-place */
-        {
-            char *src = path_buf;
-            char *dst = path_buf;
-            int depth = 0;
-
-            /* Skip leading slashes */
-            while (*src == '/') src++;
-            dst = path_buf;
-
-            while (*src) {
-                char *start;
-                int len;
-
-                while (*src == '/') src++;
-                if (!*src) break;
-
-                start = src;
-                while (*src && *src != '/') src++;
-                len = src - start;
-
-                if (len == 1 && start[0] == '.') {
-                    /* skip "." */
-                    continue;
-                } else if (len == 2 && start[0] == '.' && start[1] == '.') {
-                    if (depth > 0) {
-                        /* Backtrack to previous component */
-                        while (dst > path_buf && *dst != '/') dst--;
-                        if (dst > path_buf) dst--;  /* move before slash */
-                        depth--;
-                    }
-                    /* else at root, ".." does nothing */
-                } else {
-                    if (dst != path_buf && *dst != '/') *++dst = '/';
-                    memmove(++dst, start, len);
-                    dst += len - 1;
-                    depth++;
-                }
-            }
-
-            if (dst == path_buf) *++dst = '/';  /* root */
-            *++dst = '\0';
+        /* relative name is concatenated to the absolute path of the CWD */
+        len = strlen(full_path);
+        if (len + strlen(name->name) + 2 < PATH_MAX) {
+            if (full_path[len-1] != '/') strcat(full_path, "/");
+            strcat(full_path, name->name);
         }
     }
 
     /* RCU lookup */
     rcu_read_lock();
-    target = nomount_resolve_path(path_buf);
+    target = nomount_resolve_path(full_path);
     rcu_read_unlock();
 
     if (!target)
@@ -400,6 +356,7 @@ struct filename *nomount_getname_hook(struct filename *name)
         name = new_name;
     }
 
+    __putname(tmp_buf);
     return name;
 }
 
