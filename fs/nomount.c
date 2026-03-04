@@ -305,9 +305,9 @@ struct filename *nomount_getname_hook(struct filename *name)
         return name; 
     }
 
-    char *target = NULL, *tmp_buf, *full_path;
+    char *target = NULL, *tmp_buf;
     struct filename *new_name;
-    size_t len;
+    const char *full_path_ptr;
 
     if (nomount_should_skip() || !name || !name->name)
         return name;
@@ -317,43 +317,51 @@ struct filename *nomount_getname_hook(struct filename *name)
 
     if (name->name[0] == '/') {
         // Absolute path: we only use it directly
-        full_path = (char *)name->name;
+        full_path_ptr = (char *)name->name;
     } else {
         // relative path, concatenate with CWD
-        struct path pwd;
-        get_fs_pwd(current->fs, &pwd);
-        
-        /* d_path / d_absolute_path resolve the actual path of the CWD */
-        full_path = d_absolute_path(&pwd, tmp_buf, PATH_MAX);
-        path_put(&pwd);
+        struct fs_struct *fs = current->fs;
+        char *cwd_str;
+        char *t_buf = (char *)__get_free_page(GFP_ATOMIC); // very fast buffer
 
-        if (IS_ERR(full_path)) {
+        if (!t_buf) {
             __putname(tmp_buf);
             return name;
         }
 
-        /* relative name is concatenated to the absolute path of the CWD */
-        len = strlen(full_path);
-        if (len + strlen(name->name) + 2 < PATH_MAX) {
-            if (full_path[len-1] != '/') strcat(full_path, "/");
-            strcat(full_path, name->name);
+        spin_lock(&fs->lock);
+        cwd_str = d_path(&fs->pwd, t_buf, PAGE_SIZE);
+        spin_unlock(&fs->lock);
+
+        if (IS_ERR(cwd_str)) {
+            free_page((unsigned long)t_buf);
+            __putname(tmp_buf);
+            return name;
         }
+
+        // cwd + / + relative path
+        snprintf(tmp_buf, PATH_MAX, "%s/%s", cwd_str, name->name);
+        full_path_ptr = tmp_buf;
+
+        free_page((unsigned long)t_buf);
     }
 
     /* RCU lookup */
     rcu_read_lock();
-    target = nomount_resolve_path(full_path);
-    rcu_read_unlock();
+    target = nomount_resolve_path(full_path_ptr);
+    if (target) {
+        new_name = getname_kernel(target);
+        rcu_read_unlock();
 
-    if (!target)
-        return name;
-
-    new_name = getname_kernel(target);
-    if (!IS_ERR(new_name)) {
-        new_name->uptr = name->uptr;
-        new_name->aname = name->aname;
-        putname(name);
-        name = new_name;
+        if (!IS_ERR(new_name)) {
+            new_name->uptr = name->uptr;
+            new_name->aname = name->aname;
+            putname(name);
+            __putname(tmp_buf);
+            return new_name;
+        }
+    } else {
+        rcu_read_unlock();
     }
 
     __putname(tmp_buf);
