@@ -503,8 +503,6 @@ ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *val
         return ret;
 
     ino = dentry->d_inode->i_ino;
-    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) 
-        return ret;
 
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
@@ -542,8 +540,6 @@ int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *v
         return ret;
 
     ino = dentry->d_inode->i_ino;
-    if (!test_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) 
-        return ret;
 
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
@@ -578,8 +574,6 @@ ssize_t nomount_readlink_hook(struct inode *inode, char __user *buffer, int bufl
     if (!inode || NOMOUNT_DISABLED())
         return 0;
 
-    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return 0;
-
     nm_enter();
     vpath = nomount_get_static_vpath(inode);
     if (vpath) {
@@ -607,7 +601,6 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     struct inode *inode;
 
     if (!path || !stat || nomount_should_skip()) return;
-    if (!test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return;
 
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
@@ -631,7 +624,6 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     struct inode *inode;
 
     if (!path || !buf || nomount_should_skip()) return;
-    if (!test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return;
 
     inode = d_backing_inode(path->dentry);
     if (!inode) return;
@@ -665,8 +657,6 @@ bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long 
 
     if (unlikely(!inode || !dev || !ino || nomount_should_skip()))
         return false;
-
-    if (!test_bit(target_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) return false;
 
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, target_ino) {

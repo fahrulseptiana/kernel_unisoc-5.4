@@ -273,8 +273,7 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	const char *v_path;
 	int len;
 
-    if (path->dentry && path->dentry->d_inode &&
-		test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom)) {
+    if (path->dentry && path->dentry->d_inode) {
 		nm_enter();
         v_path = nomount_get_static_vpath(path->dentry->d_inode);
         
