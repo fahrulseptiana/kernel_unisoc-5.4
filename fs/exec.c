@@ -1734,6 +1734,8 @@ EXPORT_SYMBOL(search_binary_handler);
 
 #ifdef CONFIG_KSU_SUSFS
 extern bool ksu_execveat_hook __read_mostly;
+extern bool ksu_su_compat_enabled __read_mostly;
+extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;
 extern bool __ksu_is_allow_uid_for_current(uid_t uid);
 extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
 			void *envp, int *flags);
@@ -1780,14 +1782,16 @@ static int __do_execve_file(int fd, struct filename *filename,
 		return PTR_ERR(filename);
 
 #ifdef CONFIG_KSU_SUSFS
-	if (likely(susfs_is_current_proc_umounted())) {
+	if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {
 		goto orig_flow;
 	}
-	if (unlikely(ksu_execveat_hook)) {
+
+	if (unlikely(ksu_execveat_hook || !susfs_is_sdcard_android_data_decrypted)) {
 		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 	} else if ((__ksu_is_allow_uid_for_current(current_uid().val))) {
 		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
 	}
+
 orig_flow:
 #endif
 
