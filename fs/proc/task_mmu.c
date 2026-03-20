@@ -1131,7 +1131,6 @@ static int show_smap(struct seq_file *m, void *v)
 					seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
 			seq_puts(m, "VmFlags: mr mw me");
 			seq_putc(m, '\n');
-			goto show_pad;
 		}
 	}
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP

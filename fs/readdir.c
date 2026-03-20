@@ -25,6 +25,7 @@
 #include <asm/unaligned.h>
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#include <linux/susfs.h>
 #include <linux/susfs_def.h>
 extern bool susfs_is_inode_sus_path(struct inode *inode);
 #endif
@@ -270,6 +271,7 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
 	if (sizeof(d_ino) < sizeof(ino) && d_ino != ino) {
 		buf->error = -EOVERFLOW;
 		return -EOVERFLOW;
+	}
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	inode = ilookup(buf->sb, ino);
 	if (!inode) {
@@ -333,24 +335,6 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	buf.sb = f.file->f_inode->i_sb;
-	inode = f.file->f_path.dentry->d_inode;
-	if (f.file->f_path.dentry && inode) {
-		if (susfs_is_base_dentry_android_data_dir(f.file->f_path.dentry))
-		{
-			buf.is_base_dentry_android_data_root_dir = true;
-			buf.is_base_dentry_sdcard_root_dir = false;
-			goto orig_flow;
-		}
-		if (susfs_is_base_dentry_sdcard_dir(f.file->f_path.dentry))
-		{
-			buf.is_base_dentry_sdcard_root_dir = true;
-			buf.is_base_dentry_android_data_root_dir = false;
-			goto orig_flow;
-		}
-	}
-	buf.is_base_dentry_android_data_root_dir = false;
-	buf.is_base_dentry_sdcard_root_dir = false;
-orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
@@ -373,8 +357,6 @@ struct getdents_callback64 {
 	struct linux_dirent64 __user * current_dir;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct super_block *sb;
-	bool is_base_dentry_android_data_root_dir;
-	bool is_base_dentry_sdcard_root_dir;
 #endif
 	int prev_reclen;
 	int count;
