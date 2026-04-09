@@ -1,0 +1,153 @@
+name: Build Unisoc 5.4 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: Artifact name suffix
+        required: false
+        default: unisoc-5.4
+      jobs:
+        description: Parallel make jobs
+        required: false
+        default: "8"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages_one_command: true
+          testing: false
+
+      - name: Install host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            cpio \
+            flex \
+            kmod \
+            libelf-dev \
+            libssl-dev \
+            lz4 \
+            pahole \
+            python3 \
+            rsync \
+            zip
+
+      - name: Prepare toolchain shims
+        run: |
+          mkdir -p "$RUNNER_TEMP/llvm-bin"
+          ln -sf "$GITHUB_WORKSPACE/toolchain/bin/clang-12" "$RUNNER_TEMP/llvm-bin/clang"
+          ln -sf "$GITHUB_WORKSPACE/toolchain/bin/lld" "$RUNNER_TEMP/llvm-bin/ld.lld"
+          echo "$RUNNER_TEMP/llvm-bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
+
+      - name: Build kernel
+        env:
+          ARCH: arm64
+          OUT_DIR: ${{ github.workspace }}/out
+          LOCALVERSION: -maxsteel
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CROSS_COMPILE_ARM32: arm-linux-gnueabi-
+          CROSS_COMPILE_COMPAT: arm-linux-gnueabi-
+          LLVM: "1"
+          LLVM_IAS: "1"
+          CC: clang
+          LD: ld.lld
+          AR: llvm-ar
+          NM: llvm-nm
+          OBJCOPY: llvm-objcopy
+          OBJDUMP: llvm-objdump
+          STRIP: strip
+          DEPMOD: depmod
+          KBUILD_BUILD_HOST: github-actions
+          KBUILD_BUILD_USER: github
+        run: |
+          set -euo pipefail
+
+          trap 'rm -f arch/arm64/configs/sprd_gki_defconfig' EXIT
+
+          make O="$OUT_DIR" gki_defconfig
+          ./scripts/sprd/sprd_create_user_config.sh \
+            "$OUT_DIR/.config" \
+            "Documentation/sprd-gki-diff-config"
+          cp "$OUT_DIR/.config" arch/arm64/configs/sprd_gki_defconfig
+
+          make O="$OUT_DIR" sprd_gki_defconfig
+          make -j"${{ inputs.jobs }}" O="$OUT_DIR" Image Image.lz4 modules
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+
+          ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts"
+          MODULES_STAGING="$GITHUB_WORKSPACE/modules_staging"
+
+          mkdir -p "$ARTIFACT_DIR" "$MODULES_STAGING"
+
+          cp out/.config "$ARTIFACT_DIR/kernel_config"
+          cp out/arch/arm64/boot/Image "$ARTIFACT_DIR/"
+          cp out/arch/arm64/boot/Image.lz4 "$ARTIFACT_DIR/"
+          cp out/System.map "$ARTIFACT_DIR/"
+          cp out/Module.symvers "$ARTIFACT_DIR/"
+          cp out/vmlinux "$ARTIFACT_DIR/"
+
+          make O="$GITHUB_WORKSPACE/out" \
+            INSTALL_MOD_PATH="$MODULES_STAGING" \
+            modules_install
+
+          tar -C "$MODULES_STAGING" -czf "$ARTIFACT_DIR/modules.tar.gz" .
+
+      - name: Package AnyKernel zip
+        run: |
+          set -euo pipefail
+
+          AK3_DIR="$GITHUB_WORKSPACE/AnyKernel3"
+          ZIP_NAME="AnyKernel3-${{ inputs.artifact_name }}.zip"
+
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$AK3_DIR"
+
+          cp "$GITHUB_WORKSPACE/out/arch/arm64/boot/Image.lz4" "$AK3_DIR/"
+
+          rm -f \
+            "$AK3_DIR/.gitignore" \
+            "$AK3_DIR/LICENSE" \
+            "$AK3_DIR/README.md" \
+            "$AK3_DIR/Image" \
+            "$AK3_DIR/Image.gz" \
+            "$AK3_DIR/Image.gz-dtb" \
+            "$AK3_DIR/dtb" \
+            "$AK3_DIR/dtbo.img"
+
+          (
+            cd "$AK3_DIR"
+            zip -r9 "../artifacts/$ZIP_NAME" ./* -x '*.git*' '*placeholder'
+          )
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ inputs.artifact_name }}
+          path: artifacts/*
+          if-no-files-found: error
