@@ -98,6 +98,10 @@ jobs:
           ./scripts/sprd/sprd_create_user_config.sh \
             "$OUT_DIR/.config" \
             "Documentation/sprd-gki-diff-config"
+          ./scripts/config --file "$OUT_DIR/.config" -d HYBRIDSWAP
+          ./scripts/config --file "$OUT_DIR/.config" -d HYBRIDSWAP_CORE
+          ./scripts/config --file "$OUT_DIR/.config" -d HYBRIDSWAP_SWAPD
+          ./scripts/config --file "$OUT_DIR/.config" -d HYBRIDSWAP_ASYNC_COMPRESS
           cp "$OUT_DIR/.config" arch/arm64/configs/sprd_gki_defconfig
 
           make "${MAKE_ARGS[@]}" sprd_gki_defconfig
