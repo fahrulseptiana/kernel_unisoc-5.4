@@ -86,7 +86,7 @@ jobs:
             NM="$GITHUB_WORKSPACE/toolchain/bin/llvm-nm"
             OBJCOPY="$GITHUB_WORKSPACE/toolchain/bin/llvm-objcopy"
             OBJDUMP="$GITHUB_WORKSPACE/toolchain/bin/llvm-objdump"
-            STRIP="$GITHUB_WORKSPACE/toolchain/bin/strip"
+            STRIP=strip
             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchain/bin/aarch64-linux-gnu-"
             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchain/bin/arm-linux-gnueabi-"
             CROSS_COMPILE_COMPAT="$GITHUB_WORKSPACE/toolchain/bin/arm-linux-gnueabi-"
