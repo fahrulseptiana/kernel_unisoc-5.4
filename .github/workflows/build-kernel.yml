@@ -67,20 +67,6 @@ jobs:
           ARCH: arm64
           OUT_DIR: ${{ github.workspace }}/out
           LOCALVERSION: -maxsteel
-          CROSS_COMPILE: ${{ github.workspace }}/toolchain/bin/aarch64-linux-gnu-
-          CROSS_COMPILE_ARM32: ${{ github.workspace }}/toolchain/bin/arm-linux-gnueabi-
-          CROSS_COMPILE_COMPAT: ${{ github.workspace }}/toolchain/bin/arm-linux-gnueabi-
-          LLVM: "1"
-          LLVM_IAS: "1"
-          CC: clang
-          LD: ld.lld
-          AR: ${{ github.workspace }}/toolchain/bin/llvm-ar
-          NM: ${{ github.workspace }}/toolchain/bin/llvm-nm
-          OBJCOPY: ${{ github.workspace }}/toolchain/bin/llvm-objcopy
-          OBJDUMP: ${{ github.workspace }}/toolchain/bin/llvm-objdump
-          STRIP: ${{ github.workspace }}/toolchain/bin/strip
-          HOSTCC: gcc
-          HOSTCXX: g++
           DEPMOD: depmod
           KBUILD_BUILD_HOST: github-actions
           KBUILD_BUILD_USER: github
@@ -89,14 +75,33 @@ jobs:
 
           trap 'rm -f arch/arm64/configs/sprd_gki_defconfig' EXIT
 
-          make O="$OUT_DIR" gki_defconfig
+          MAKE_ARGS=(
+            O="$OUT_DIR"
+            ARCH=arm64
+            LLVM=1
+            LLVM_IAS=1
+            CC=clang
+            LD=ld.lld
+            AR="$GITHUB_WORKSPACE/toolchain/bin/llvm-ar"
+            NM="$GITHUB_WORKSPACE/toolchain/bin/llvm-nm"
+            OBJCOPY="$GITHUB_WORKSPACE/toolchain/bin/llvm-objcopy"
+            OBJDUMP="$GITHUB_WORKSPACE/toolchain/bin/llvm-objdump"
+            STRIP="$GITHUB_WORKSPACE/toolchain/bin/strip"
+            CROSS_COMPILE="$GITHUB_WORKSPACE/toolchain/bin/aarch64-linux-gnu-"
+            CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchain/bin/arm-linux-gnueabi-"
+            CROSS_COMPILE_COMPAT="$GITHUB_WORKSPACE/toolchain/bin/arm-linux-gnueabi-"
+            HOSTCC=gcc
+            HOSTCXX=g++
+          )
+
+          make "${MAKE_ARGS[@]}" gki_defconfig
           ./scripts/sprd/sprd_create_user_config.sh \
             "$OUT_DIR/.config" \
             "Documentation/sprd-gki-diff-config"
           cp "$OUT_DIR/.config" arch/arm64/configs/sprd_gki_defconfig
 
-          make O="$OUT_DIR" sprd_gki_defconfig
-          make -j"${{ inputs.jobs }}" O="$OUT_DIR" Image Image.lz4 modules
+          make "${MAKE_ARGS[@]}" sprd_gki_defconfig
+          make -j"${{ inputs.jobs }}" "${MAKE_ARGS[@]}" Image Image.lz4 modules
 
       - name: Collect artifacts
         run: |
