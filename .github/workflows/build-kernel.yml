@@ -61,25 +61,26 @@ jobs:
           ln -sf "$GITHUB_WORKSPACE/toolchain/bin/clang-12" "$RUNNER_TEMP/llvm-bin/clang"
           ln -sf "$GITHUB_WORKSPACE/toolchain/bin/lld" "$RUNNER_TEMP/llvm-bin/ld.lld"
           echo "$RUNNER_TEMP/llvm-bin" >> "$GITHUB_PATH"
-          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
 
       - name: Build kernel
         env:
           ARCH: arm64
           OUT_DIR: ${{ github.workspace }}/out
           LOCALVERSION: -maxsteel
-          CROSS_COMPILE: aarch64-linux-gnu-
-          CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-          CROSS_COMPILE_COMPAT: arm-linux-gnueabi-
+          CROSS_COMPILE: ${{ github.workspace }}/toolchain/bin/aarch64-linux-gnu-
+          CROSS_COMPILE_ARM32: ${{ github.workspace }}/toolchain/bin/arm-linux-gnueabi-
+          CROSS_COMPILE_COMPAT: ${{ github.workspace }}/toolchain/bin/arm-linux-gnueabi-
           LLVM: "1"
           LLVM_IAS: "1"
           CC: clang
           LD: ld.lld
-          AR: llvm-ar
-          NM: llvm-nm
-          OBJCOPY: llvm-objcopy
-          OBJDUMP: llvm-objdump
-          STRIP: strip
+          AR: ${{ github.workspace }}/toolchain/bin/llvm-ar
+          NM: ${{ github.workspace }}/toolchain/bin/llvm-nm
+          OBJCOPY: ${{ github.workspace }}/toolchain/bin/llvm-objcopy
+          OBJDUMP: ${{ github.workspace }}/toolchain/bin/llvm-objdump
+          STRIP: ${{ github.workspace }}/toolchain/bin/strip
+          HOSTCC: gcc
+          HOSTCXX: g++
           DEPMOD: depmod
           KBUILD_BUILD_HOST: github-actions
           KBUILD_BUILD_USER: github
